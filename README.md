@@ -11,8 +11,10 @@ A macOS menu bar app that automatically records Zoom and Teams calls, transcribe
 
 - **Auto-Record Calls** — Automatically starts recording when Zoom or Teams calls begin (Mon-Fri)
 - **Dual Audio Capture** — Records both your microphone and system audio (meeting participants)
+- **Speaker Diarization** — Identifies different speakers (Speaker 1, Speaker 2, etc.) using whisperx
 - **Local Transcription** — Uses [lightning-whisper-mlx](https://github.com/mustafaaljadery/lightning-whisper-mlx), optimized for Apple Silicon
 - **AI Summaries** — Generates meeting summaries with action items using Ollama
+- **Hands-Free Pipeline** — Record → Transcribe → Summarize runs automatically
 - **Privacy First** — 100% local processing, no cloud services, no data collection
 
 ## Requirements
@@ -64,6 +66,22 @@ ollama pull llama3.1:latest
 ollama serve  # Keep running in background
 ```
 
+#### 4. Enable Speaker Diarization (Optional)
+
+```bash
+# Install whisperx
+pip install whisperx
+
+# Get a HuggingFace token (free) from https://huggingface.co/settings/tokens
+# Accept model terms at https://huggingface.co/pyannote/speaker-diarization-3.1
+
+# Set the token
+export HF_TOKEN="hf_your_token_here"
+
+# Add to ~/.zshrc for persistence
+echo 'export HF_TOKEN="hf_your_token_here"' >> ~/.zshrc
+```
+
 </details>
 
 ## Usage
@@ -74,7 +92,7 @@ ollama serve  # Keep running in background
 python run.py
 ```
 
-A microphone icon (🎙) appears in your menu bar.
+A microphone icon (🎙) appears in your menu bar. The app also starts automatically at login if configured.
 
 ### Menu Options
 
@@ -84,12 +102,14 @@ A microphone icon (🎙) appears in your menu bar.
 | **Auto-Record Calls (Mon-Fri)** | Toggle automatic recording for Zoom/Teams |
 | **Auto-Transcribe** | Automatically transcribe after recording stops |
 | **Auto-Summarize** | Automatically summarize after transcription |
+| **Speaker Diarization** | Identify different speakers in transcript |
 | **Transcribe Latest** | Transcribe the most recent recording |
 | **Summarize Latest** | Generate AI summary of the latest transcript |
 | **Copy Summary to Clipboard** | Copy the latest summary for pasting |
 | **Devices** | Select microphone |
 | **Models** | Select Ollama model for summaries |
 | **Open Recordings Folder** | Open saved recordings in Finder |
+| **Status** | Check BlackHole, Ollama, and diarization status |
 
 **Tip:** Click on notifications to open the generated file directly.
 
@@ -102,6 +122,40 @@ When enabled, Meeting Scribe monitors for Zoom and Teams calls:
 3. A checkmark indicates auto-record is active
 4. Recording starts/stops automatically with your calls
 
+### Hands-Free Pipeline
+
+With default settings, the complete flow is automatic:
+
+1. **Call starts** → Recording begins automatically
+2. **Call ends** → Recording stops
+3. **Auto-transcribe** → Transcript generated (with speaker labels if enabled)
+4. **Auto-summarize** → AI summary with action items created
+5. **Notification** → Click to open the summary
+
+No manual intervention required.
+
+### Speaker Diarization
+
+When enabled, transcripts include speaker identification:
+
+```
+[00:15] SPEAKER_00:
+  Hi everyone, let's get started with the weekly sync.
+
+[00:22] SPEAKER_01:
+  Thanks for setting this up. First item on the agenda...
+
+[01:45] SPEAKER_00:
+  Good point. Let me share my screen.
+```
+
+**Setup:**
+1. Install whisperx: `pip install whisperx`
+2. Set HuggingFace token: `export HF_TOKEN="hf_..."`
+3. Enable in menu: **Speaker Diarization** ✓
+
+Falls back to basic transcription automatically if diarization is unavailable.
+
 ### Output Files
 
 All files are saved to `~/Documents/MeetingRecordings/`:
@@ -109,9 +163,18 @@ All files are saved to `~/Documents/MeetingRecordings/`:
 ```
 MeetingRecordings/
 ├── meeting_20240115_143022.wav        # Audio recording
-├── meeting_20240115_143022.txt        # Transcript
+├── meeting_20240115_143022.txt        # Transcript (with speaker labels)
 └── meeting_20240115_143022.summary.md # AI-generated summary
 ```
+
+### Configuration
+
+Settings are persisted to `~/.config/meeting-scribe/config.json`:
+
+- Auto-record preference
+- Auto-transcribe/summarize toggles
+- Speaker diarization preference
+- Selected Ollama model
 
 ## Architecture
 
@@ -123,18 +186,18 @@ MeetingRecordings/
         │               ┌─────┘      └─────┐              │
         ▼               ▼                  ▼              ▼
 ┌──────────────┐  ┌──────────┐      ┌───────────┐  ┌─────────────┐
-│ Call Monitor │  │ Mic Input│      │ BlackHole │  │ Whisper MLX │
-│ (Zoom/Teams) │  └──────────┘      │(sys audio)│  └──────┬──────┘
-└──────────────┘                    └───────────┘         │
+│ Call Monitor │  │ Mic Input│      │ BlackHole │  │   Whisper   │
+│ (Zoom/Teams) │  └──────────┘      │(sys audio)│  │ (+ whisperx)│
+└──────────────┘                    └───────────┘  └──────┬──────┘
+                                                          │
                                                           ▼
                                                    ┌─────────────┐
                                                    │   Ollama    │
+                                                   │ (summaries) │
                                                    └─────────────┘
 ```
 
-## Configuration
-
-### Supported Audio Devices
+## Supported Audio Devices
 
 The app automatically detects:
 - Default microphone
@@ -142,22 +205,25 @@ The app automatically detects:
 - ZoomAudioDevice (call detection)
 - Microsoft Teams Audio (call detection)
 
-### Whisper Models
+## Models
 
-Default: `distil-medium.en` — good balance of speed and accuracy.
+### Transcription
 
-Available models (configurable in code):
-- `tiny.en`, `base.en`, `small.en` — faster, less accurate
-- `medium.en`, `distil-medium.en` — balanced
-- `large-v3`, `distil-large-v3` — most accurate, slower
+| Model | Speed | Accuracy | Use Case |
+|-------|-------|----------|----------|
+| `distil-medium.en` | Fast | Good | Default, recommended |
+| `tiny.en`, `base.en` | Fastest | Lower | Quick drafts |
+| `medium.en` | Medium | Better | Diarization default |
+| `large-v3` | Slow | Best | Important meetings |
 
-### Ollama Models
+### Summarization (Ollama)
 
-Default: `llama3.1:8b`
+Any Ollama model works. Select from menu under **Models → Ollama Model**.
 
-Any Ollama model works. Recommended alternatives:
-- `mistral:7b` — fast and capable
-- `llama3.1:70b` — higher quality summaries (requires more RAM)
+Recommended:
+- `llama3.1:latest` — Default, good balance
+- `mistral:7b` — Fast and capable
+- `llama3.1:70b` — Best quality (requires 48GB+ RAM)
 
 ## Troubleshooting
 
@@ -179,6 +245,8 @@ Restart your Mac after installing BlackHole.
 2. Create a **Multi-Output Device** with both your speakers and BlackHole
 3. Set it as your system output in **System Preferences > Sound**
 
+See [scripts/setup_blackhole.md](scripts/setup_blackhole.md) for detailed instructions.
+
 ### Ollama not available
 
 ```bash
@@ -187,6 +255,26 @@ ollama serve
 
 # Verify it's running
 curl http://localhost:11434/api/tags
+```
+
+### Speaker diarization not working
+
+Check the **Status** menu for diarization status. Common issues:
+
+1. **whisperx not installed**: `pip install whisperx`
+2. **HF_TOKEN not set**: `export HF_TOKEN="hf_..."`
+3. **Model terms not accepted**: Visit https://huggingface.co/pyannote/speaker-diarization-3.1
+
+The app automatically falls back to basic transcription if diarization fails.
+
+### App not starting at login
+
+```bash
+# Reinstall launch agent
+./scripts/install_launch_agent.sh
+
+# Or remove it
+./scripts/uninstall_launch_agent.sh
 ```
 
 ## Contributing
@@ -201,5 +289,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 - [rumps](https://github.com/jaredks/rumps) — macOS menu bar apps in Python
 - [lightning-whisper-mlx](https://github.com/mustafaaljadery/lightning-whisper-mlx) — Fast Whisper for Apple Silicon
+- [whisperx](https://github.com/m-bain/whisperX) — Whisper with speaker diarization
 - [BlackHole](https://existential.audio/blackhole/) — Virtual audio driver
 - [Ollama](https://ollama.ai/) — Local LLM runner
+- [pyannote-audio](https://github.com/pyannote/pyannote-audio) — Speaker diarization
