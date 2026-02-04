@@ -1,6 +1,7 @@
 """Menu bar application using rumps."""
 
 import threading
+from pathlib import Path
 from typing import Optional
 import rumps
 
@@ -9,6 +10,7 @@ from .transcription import WhisperTranscriber
 from .summarization import OllamaClient
 from .storage import FileManager
 from .auto_record import CallMonitor
+from .config import Config
 
 
 class MeetingRecorderApp(rumps.App):
@@ -21,15 +23,17 @@ class MeetingRecorderApp(rumps.App):
             quit_button=None
         )
 
+        self.config = Config()
         self.recorder = AudioRecorder()
         self.device_manager = AudioDeviceManager()
-        self.transcriber = WhisperTranscriber()
-        self.ollama = OllamaClient()
+        self.transcriber = WhisperTranscriber(model_name=self.config.whisper_model)
+        self.ollama = OllamaClient(model=self.config.ollama_model)
         self.file_manager = FileManager()
 
         self._recording_timer: Optional[rumps.Timer] = None
         self._processing = False
         self._auto_recorded = False
+        self._current_recording_path: Optional[Path] = None
 
         self.call_monitor = CallMonitor(
             on_call_start=self._on_call_start,
@@ -37,6 +41,7 @@ class MeetingRecorderApp(rumps.App):
             weekdays_only=True,
             poll_interval=3.0,
         )
+        self.call_monitor.enabled = self.config.auto_record_enabled
         self.call_monitor.start_monitoring()
 
         self._build_menu()
@@ -47,11 +52,26 @@ class MeetingRecorderApp(rumps.App):
             "Auto-Record Calls (Mon-Fri)",
             callback=self._toggle_auto_record
         )
+        self._auto_record_item.state = 1 if self.config.auto_record_enabled else 0
+
+        self._auto_transcribe_item = rumps.MenuItem(
+            "Auto-Transcribe",
+            callback=self._toggle_auto_transcribe
+        )
+        self._auto_transcribe_item.state = 1 if self.config.auto_transcribe else 0
+
+        self._auto_summarize_item = rumps.MenuItem(
+            "Auto-Summarize",
+            callback=self._toggle_auto_summarize
+        )
+        self._auto_summarize_item.state = 1 if self.config.auto_summarize else 0
 
         self.menu = [
             rumps.MenuItem("Start Recording", callback=self._toggle_recording),
             None,
             self._auto_record_item,
+            self._auto_transcribe_item,
+            self._auto_summarize_item,
             None,
             rumps.MenuItem("Transcribe Latest", callback=self._transcribe_latest),
             rumps.MenuItem("Summarize Latest", callback=self._summarize_latest),
@@ -128,6 +148,7 @@ class MeetingRecorderApp(rumps.App):
     def _toggle_auto_record(self, sender):
         """Toggle auto-record on/off."""
         self.call_monitor.enabled = not self.call_monitor.enabled
+        self.config.auto_record_enabled = self.call_monitor.enabled
         sender.state = 1 if self.call_monitor.enabled else 0
 
         status = "enabled" if self.call_monitor.enabled else "disabled"
@@ -136,6 +157,16 @@ class MeetingRecorderApp(rumps.App):
             subtitle="",
             message=f"Auto-record for Zoom/Teams calls {status} (Mon-Fri)"
         )
+
+    def _toggle_auto_transcribe(self, sender):
+        """Toggle auto-transcribe on/off."""
+        self.config.auto_transcribe = not self.config.auto_transcribe
+        sender.state = 1 if self.config.auto_transcribe else 0
+
+    def _toggle_auto_summarize(self, sender):
+        """Toggle auto-summarize on/off."""
+        self.config.auto_summarize = not self.config.auto_summarize
+        sender.state = 1 if self.config.auto_summarize else 0
 
     def _on_call_start(self):
         """Called when a Zoom/Teams call is detected."""
@@ -166,12 +197,6 @@ class MeetingRecorderApp(rumps.App):
         if record_item:
             self._stop_recording(record_item)
 
-        rumps.notification(
-            title="Auto-Recording Stopped",
-            subtitle="Call ended",
-            message="Recording saved automatically"
-        )
-
     def _toggle_recording(self, sender):
         """Toggle recording on/off."""
         if self.recorder.is_recording:
@@ -184,6 +209,7 @@ class MeetingRecorderApp(rumps.App):
         """Start recording."""
         try:
             filepath = self.recorder.start_recording()
+            self._current_recording_path = filepath
             sender.title = "Stop Recording"
             self.title = "🔴 00:00"
 
@@ -210,6 +236,7 @@ class MeetingRecorderApp(rumps.App):
                 self._recording_timer = None
 
             filepath = self.recorder.stop_recording()
+            self._current_recording_path = filepath
             sender.title = "Start Recording"
             self.title = "🎙"
 
@@ -218,6 +245,11 @@ class MeetingRecorderApp(rumps.App):
                 subtitle="",
                 message=f"Saved: {filepath.name}"
             )
+
+            # Auto-process pipeline
+            if self.config.auto_transcribe:
+                self._auto_process_recording(filepath)
+
         except Exception as e:
             self.title = "🎙"
             rumps.notification(
@@ -225,6 +257,67 @@ class MeetingRecorderApp(rumps.App):
                 subtitle="",
                 message=str(e)
             )
+
+    def _auto_process_recording(self, audio_path: Path):
+        """Auto-transcribe and optionally summarize a recording."""
+        if self._processing:
+            return
+
+        self._processing = True
+        self.title = "⏳"
+
+        def process():
+            try:
+                # Transcribe
+                rumps.notification(
+                    title="Auto-Transcribing...",
+                    subtitle="",
+                    message=f"Processing: {audio_path.name}"
+                )
+
+                text = self.transcriber.transcribe(audio_path)
+                transcript_path = audio_path.with_suffix(".txt")
+
+                rumps.notification(
+                    title="Transcription Complete",
+                    subtitle="",
+                    message=f"Saved: {transcript_path.name}"
+                )
+
+                # Summarize if enabled
+                if self.config.auto_summarize and self.ollama.is_available():
+                    rumps.notification(
+                        title="Auto-Summarizing...",
+                        subtitle="",
+                        message=f"Processing: {transcript_path.name}"
+                    )
+
+                    self.ollama.summarize_transcript_file(transcript_path)
+
+                    rumps.notification(
+                        title="Summary Complete",
+                        subtitle="",
+                        message=f"Meeting processed: {audio_path.stem}"
+                    )
+                elif self.config.auto_summarize and not self.ollama.is_available():
+                    rumps.notification(
+                        title="Summarization Skipped",
+                        subtitle="",
+                        message="Ollama not running"
+                    )
+
+            except Exception as e:
+                rumps.notification(
+                    title="Processing Error",
+                    subtitle="",
+                    message=str(e)
+                )
+            finally:
+                self._processing = False
+                self.title = "🎙"
+
+        thread = threading.Thread(target=process, daemon=True)
+        thread.start()
 
     def _update_duration(self, timer):
         """Update the menu bar with recording duration."""

@@ -11,7 +11,7 @@ import requests
 class OllamaClient:
     """Client for Ollama local LLM API."""
 
-    DEFAULT_MODEL = "llama3.1:8b"
+    DEFAULT_MODEL = "llama3.1:latest"
     DEFAULT_URL = "http://localhost:11434"
 
     MEETING_SUMMARY_PROMPT = """You are a helpful assistant that summarizes meeting transcripts.
