@@ -24,18 +24,31 @@ A macOS menu bar app that automatically records Zoom and Teams calls, transcribe
 
 ## Installation
 
-### 1. Install Dependencies
+### Quick Install (Recommended)
 
 ```bash
 # Clone the repository
 git clone https://github.com/Mazurevitz/meeting-scribe.git
 cd meeting-scribe
 
-# Install Python dependencies
+# Run the installer
+./install.sh
+```
+
+The installer handles everything: Homebrew, Python deps, BlackHole, Ollama, and launch-at-login setup.
+
+### Manual Installation
+
+<details>
+<summary>Click to expand manual steps</summary>
+
+#### 1. Install Dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-### 2. Install BlackHole (System Audio Capture)
+#### 2. Install BlackHole (System Audio Capture)
 
 ```bash
 brew install blackhole-2ch
@@ -43,13 +56,15 @@ brew install blackhole-2ch
 
 After installation, configure Audio MIDI Setup to capture system audio. See [setup guide](scripts/setup_blackhole.md) for detailed instructions.
 
-### 3. Install Ollama (Optional, for Summaries)
+#### 3. Install Ollama (Optional, for Summaries)
 
 ```bash
 brew install ollama
-ollama pull llama3.1:8b
+ollama pull llama3.1:latest
 ollama serve  # Keep running in background
 ```
+
+</details>
 
 ## Usage
 
@@ -67,10 +82,16 @@ A microphone icon (🎙) appears in your menu bar.
 |--------|-------------|
 | **Start/Stop Recording** | Manually control recording |
 | **Auto-Record Calls (Mon-Fri)** | Toggle automatic recording for Zoom/Teams |
+| **Auto-Transcribe** | Automatically transcribe after recording stops |
+| **Auto-Summarize** | Automatically summarize after transcription |
 | **Transcribe Latest** | Transcribe the most recent recording |
 | **Summarize Latest** | Generate AI summary of the latest transcript |
-| **Devices** | Select microphone and view system audio status |
+| **Copy Summary to Clipboard** | Copy the latest summary for pasting |
+| **Devices** | Select microphone |
+| **Models** | Select Ollama model for summaries |
 | **Open Recordings Folder** | Open saved recordings in Finder |
+
+**Tip:** Click on notifications to open the generated file directly.
 
 ### Auto-Recording
 

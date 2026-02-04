@@ -1,5 +1,6 @@
 """Menu bar application using rumps."""
 
+import subprocess
 import threading
 from pathlib import Path
 from typing import Optional
@@ -34,6 +35,7 @@ class MeetingRecorderApp(rumps.App):
         self._processing = False
         self._auto_recorded = False
         self._current_recording_path: Optional[Path] = None
+        self._last_summary_path: Optional[Path] = None
 
         self.call_monitor = CallMonitor(
             on_call_start=self._on_call_start,
@@ -75,8 +77,10 @@ class MeetingRecorderApp(rumps.App):
             None,
             rumps.MenuItem("Transcribe Latest", callback=self._transcribe_latest),
             rumps.MenuItem("Summarize Latest", callback=self._summarize_latest),
+            rumps.MenuItem("Copy Summary to Clipboard", callback=self._copy_summary),
             None,
             self._build_devices_menu(),
+            self._build_models_menu(),
             None,
             rumps.MenuItem("Open Recordings Folder", callback=self._open_folder),
             None,
@@ -117,6 +121,31 @@ class MeetingRecorderApp(rumps.App):
 
         return devices_menu
 
+    def _build_models_menu(self) -> rumps.MenuItem:
+        """Build the model selection submenu."""
+        models_menu = rumps.MenuItem("Models")
+
+        # Ollama models submenu
+        ollama_menu = rumps.MenuItem("Ollama Model")
+        available_models = self.ollama.list_models() if self.ollama.is_available() else []
+        current_model = self.config.ollama_model
+
+        if available_models:
+            for model in available_models:
+                item = rumps.MenuItem(
+                    model,
+                    callback=lambda sender, m=model: self._select_ollama_model(sender, m)
+                )
+                if model == current_model:
+                    item.state = 1
+                ollama_menu.add(item)
+        else:
+            ollama_menu.add(rumps.MenuItem("Ollama not running"))
+
+        models_menu.add(ollama_menu)
+
+        return models_menu
+
     def _build_status_menu(self) -> rumps.MenuItem:
         """Build the status submenu."""
         status_menu = rumps.MenuItem("Status")
@@ -128,12 +157,7 @@ class MeetingRecorderApp(rumps.App):
         ollama_status = "✓ Running" if self.ollama.is_available() else "✗ Not Running"
         status_menu.add(rumps.MenuItem(f"Ollama: {ollama_status}"))
 
-        if self.ollama.is_available():
-            models = self.ollama.list_models()
-            model_str = ", ".join(models[:3]) if models else "None"
-            if len(models) > 3:
-                model_str += f" (+{len(models) - 3})"
-            status_menu.add(rumps.MenuItem(f"Models: {model_str}"))
+        status_menu.add(rumps.MenuItem(f"Using: {self.config.ollama_model}"))
 
         return status_menu
 
@@ -144,6 +168,21 @@ class MeetingRecorderApp(rumps.App):
                 item.state = 0
         sender.state = 1
         self.recorder.set_microphone(device)
+
+    def _select_ollama_model(self, sender, model):
+        """Handle Ollama model selection."""
+        for item in sender.parent.values():
+            if isinstance(item, rumps.MenuItem):
+                item.state = 0
+        sender.state = 1
+        self.config.set("ollama_model", model)
+        self.ollama = OllamaClient(model=model)
+
+        rumps.notification(
+            title="Model Changed",
+            subtitle="",
+            message=f"Now using: {model}"
+        )
 
     def _toggle_auto_record(self, sender):
         """Toggle auto-record on/off."""
@@ -219,7 +258,10 @@ class MeetingRecorderApp(rumps.App):
             rumps.notification(
                 title="Recording Started",
                 subtitle="",
-                message=f"Saving to: {filepath.name}"
+                message=f"Saving to: {filepath.name}",
+                action_button="Show",
+                other_button=None,
+                data={"action": "open", "path": str(filepath.parent)}
             )
         except Exception as e:
             rumps.notification(
@@ -242,8 +284,10 @@ class MeetingRecorderApp(rumps.App):
 
             rumps.notification(
                 title="Recording Saved",
-                subtitle="",
-                message=f"Saved: {filepath.name}"
+                subtitle="Click to open",
+                message=f"Saved: {filepath.name}",
+                action_button="Open",
+                data={"action": "open", "path": str(filepath)}
             )
 
             # Auto-process pipeline
@@ -280,8 +324,10 @@ class MeetingRecorderApp(rumps.App):
 
                 rumps.notification(
                     title="Transcription Complete",
-                    subtitle="",
-                    message=f"Saved: {transcript_path.name}"
+                    subtitle="Click to open",
+                    message=f"Saved: {transcript_path.name}",
+                    action_button="Open",
+                    data={"action": "open", "path": str(transcript_path)}
                 )
 
                 # Summarize if enabled
@@ -293,11 +339,15 @@ class MeetingRecorderApp(rumps.App):
                     )
 
                     self.ollama.summarize_transcript_file(transcript_path)
+                    summary_path = transcript_path.with_suffix(".summary.md")
+                    self._last_summary_path = summary_path
 
                     rumps.notification(
                         title="Summary Complete",
-                        subtitle="",
-                        message=f"Meeting processed: {audio_path.stem}"
+                        subtitle="Click to open",
+                        message=f"Meeting processed: {audio_path.stem}",
+                        action_button="Open",
+                        data={"action": "open", "path": str(summary_path)}
                     )
                 elif self.config.auto_summarize and not self.ollama.is_available():
                     rumps.notification(
@@ -355,11 +405,14 @@ class MeetingRecorderApp(rumps.App):
                 )
 
                 text = self.transcriber.transcribe(latest)
+                transcript_path = latest.with_suffix(".txt")
 
                 rumps.notification(
                     title="Transcription Complete",
-                    subtitle="",
-                    message=f"Saved transcript for {latest.name}"
+                    subtitle="Click to open",
+                    message=f"Saved transcript for {latest.name}",
+                    action_button="Open",
+                    data={"action": "open", "path": str(transcript_path)}
                 )
             except Exception as e:
                 rumps.notification(
@@ -413,11 +466,15 @@ class MeetingRecorderApp(rumps.App):
                 )
 
                 self.ollama.summarize_transcript_file(latest)
+                summary_path = latest.with_suffix(".summary.md")
+                self._last_summary_path = summary_path
 
                 rumps.notification(
                     title="Summary Complete",
-                    subtitle="",
-                    message=f"Saved summary for {latest.name}"
+                    subtitle="Click to open",
+                    message=f"Saved summary for {latest.name}",
+                    action_button="Open",
+                    data={"action": "open", "path": str(summary_path)}
                 )
             except Exception as e:
                 rumps.notification(
@@ -431,6 +488,45 @@ class MeetingRecorderApp(rumps.App):
 
         thread = threading.Thread(target=summarize, daemon=True)
         thread.start()
+
+    def _copy_summary(self, sender):
+        """Copy the latest summary to clipboard."""
+        latest = self.file_manager.get_latest_transcript()
+        if latest:
+            summary_path = latest.with_suffix(".summary.md")
+            if summary_path.exists():
+                with open(summary_path, "r") as f:
+                    content = f.read()
+
+                # Use pbcopy to copy to clipboard
+                process = subprocess.Popen(
+                    ["pbcopy"],
+                    stdin=subprocess.PIPE,
+                    env={"LANG": "en_US.UTF-8"}
+                )
+                process.communicate(content.encode("utf-8"))
+
+                rumps.notification(
+                    title="Copied to Clipboard",
+                    subtitle="",
+                    message=f"Summary: {summary_path.name}"
+                )
+                return
+
+        rumps.notification(
+            title="No Summary",
+            subtitle="",
+            message="No summary found. Summarize a recording first."
+        )
+
+    @rumps.notifications
+    def _handle_notification(self, notification):
+        """Handle notification clicks."""
+        data = notification.get("data", {})
+        if data.get("action") == "open":
+            path = data.get("path")
+            if path:
+                subprocess.run(["open", path])
 
     def _open_folder(self, sender):
         """Open the recordings folder in Finder."""
