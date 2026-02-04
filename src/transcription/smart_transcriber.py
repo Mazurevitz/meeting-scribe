@@ -1,7 +1,7 @@
 """Smart transcriber with automatic fallback between diarization and basic transcription."""
 
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 import os
 
 from .whisper_transcriber import WhisperTranscriber
@@ -70,8 +70,8 @@ class SmartTranscriber:
 
     def transcribe(
         self,
-        audio_path: Path | str,
-        output_path: Optional[Path | str] = None,
+        audio_path: Union[Path, str],
+        output_path: Optional[Union[Path, str]] = None,
         force_diarization: bool = False,
         force_basic: bool = False,
         num_speakers: Optional[int] = None,

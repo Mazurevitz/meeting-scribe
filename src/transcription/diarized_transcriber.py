@@ -3,7 +3,20 @@
 import os
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
+from functools import wraps
+
+# Fix for PyTorch 2.6+ weights_only security - must be done BEFORE importing pyannote
+import torch
+_torch_load_original = torch.load
+
+@wraps(_torch_load_original)
+def _torch_load_patched(*args, **kwargs):
+    # Force weights_only=False for pyannote model loading
+    kwargs['weights_only'] = False
+    return _torch_load_original(*args, **kwargs)
+
+torch.load = _torch_load_patched
 
 
 class DiarizedTranscriber:
@@ -15,11 +28,12 @@ class DiarizedTranscriber:
         self,
         model_name: Optional[str] = None,
         hf_token: Optional[str] = None,
-        device: str = "mps",  # Apple Silicon
+        device: Optional[str] = None,
     ):
         self.model_name = model_name or self.DEFAULT_MODEL
         self.hf_token = hf_token or os.environ.get("HF_TOKEN")
-        self.device = device
+        # whisperx uses ctranslate2 which doesn't support MPS, use CPU
+        self.device = device or "cpu"
         self._model = None
         self._diarize_model = None
         self._align_model = None
@@ -32,8 +46,8 @@ class DiarizedTranscriber:
 
         import whisperx
 
-        # Load whisper model
-        compute_type = "float32"  # or "float16" for faster on supported hardware
+        # Load whisper model - can use MPS for speed
+        compute_type = "float32"
         self._model = whisperx.load_model(
             self.model_name,
             self.device,
@@ -62,17 +76,17 @@ class DiarizedTranscriber:
                 "Get token at: https://huggingface.co/settings/tokens"
             )
 
-        import whisperx
+        from whisperx.diarize import DiarizationPipeline
 
-        self._diarize_model = whisperx.DiarizationPipeline(
+        self._diarize_model = DiarizationPipeline(
             use_auth_token=self.hf_token,
             device=self.device
         )
 
     def transcribe(
         self,
-        audio_path: Path | str,
-        output_path: Optional[Path | str] = None,
+        audio_path: Union[Path, str],
+        output_path: Optional[Union[Path, str]] = None,
         num_speakers: Optional[int] = None,
         min_speakers: Optional[int] = None,
         max_speakers: Optional[int] = None,
@@ -198,7 +212,7 @@ class DiarizedTranscriber:
         secs = int(seconds % 60)
         return f"{minutes:02d}:{secs:02d}"
 
-    def get_speakers(self, audio_path: Path | str) -> List[str]:
+    def get_speakers(self, audio_path: Union[Path, str]) -> List[str]:
         """Get list of detected speakers from an audio file."""
         import whisperx
 
