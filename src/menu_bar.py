@@ -7,7 +7,7 @@ from typing import Optional
 import rumps
 
 from .audio import AudioRecorder, AudioDeviceManager
-from .transcription import WhisperTranscriber
+from .transcription import SmartTranscriber
 from .summarization import OllamaClient
 from .storage import FileManager
 from .auto_record import CallMonitor
@@ -27,7 +27,11 @@ class MeetingRecorderApp(rumps.App):
         self.config = Config()
         self.recorder = AudioRecorder()
         self.device_manager = AudioDeviceManager()
-        self.transcriber = WhisperTranscriber(model_name=self.config.whisper_model)
+        self.transcriber = SmartTranscriber(
+            prefer_diarization=self.config.prefer_diarization,
+            whisper_model=self.config.whisper_model,
+            diarization_model=self.config.diarization_model,
+        )
         self.ollama = OllamaClient(model=self.config.ollama_model)
         self.file_manager = FileManager()
 
@@ -68,12 +72,19 @@ class MeetingRecorderApp(rumps.App):
         )
         self._auto_summarize_item.state = 1 if self.config.auto_summarize else 0
 
+        self._diarization_item = rumps.MenuItem(
+            "Speaker Diarization",
+            callback=self._toggle_diarization
+        )
+        self._diarization_item.state = 1 if self.config.prefer_diarization else 0
+
         self.menu = [
             rumps.MenuItem("Start Recording", callback=self._toggle_recording),
             None,
             self._auto_record_item,
             self._auto_transcribe_item,
             self._auto_summarize_item,
+            self._diarization_item,
             None,
             rumps.MenuItem("Transcribe Latest", callback=self._transcribe_latest),
             rumps.MenuItem("Summarize Latest", callback=self._summarize_latest),
@@ -157,7 +168,15 @@ class MeetingRecorderApp(rumps.App):
         ollama_status = "✓ Running" if self.ollama.is_available() else "✗ Not Running"
         status_menu.add(rumps.MenuItem(f"Ollama: {ollama_status}"))
 
-        status_menu.add(rumps.MenuItem(f"Using: {self.config.ollama_model}"))
+        status_menu.add(rumps.MenuItem(f"LLM: {self.config.ollama_model}"))
+
+        # Diarization status
+        diar_status = self.transcriber.get_status()
+        if diar_status["diarization_available"]:
+            status_menu.add(rumps.MenuItem("Diarization: ✓ Available"))
+        else:
+            reason = diar_status["diarization_status"]
+            status_menu.add(rumps.MenuItem(f"Diarization: ✗ {reason}"))
 
         return status_menu
 
@@ -206,6 +225,28 @@ class MeetingRecorderApp(rumps.App):
         """Toggle auto-summarize on/off."""
         self.config.auto_summarize = not self.config.auto_summarize
         sender.state = 1 if self.config.auto_summarize else 0
+
+    def _toggle_diarization(self, sender):
+        """Toggle speaker diarization on/off."""
+        new_value = not self.config.prefer_diarization
+        self.config.prefer_diarization = new_value
+        self.transcriber.prefer_diarization = new_value
+        sender.state = 1 if new_value else 0
+
+        if new_value and not self.transcriber.can_diarize:
+            status = self.transcriber.get_status()
+            rumps.notification(
+                title="Diarization Enabled",
+                subtitle="But not available",
+                message=status["diarization_status"]
+            )
+        else:
+            status = "enabled" if new_value else "disabled"
+            rumps.notification(
+                title="Speaker Diarization",
+                subtitle="",
+                message=f"Speaker identification {status}"
+            )
 
     def _on_call_start(self):
         """Called when a Zoom/Teams call is detected."""
@@ -313,18 +354,20 @@ class MeetingRecorderApp(rumps.App):
         def process():
             try:
                 # Transcribe
+                method_hint = "with speaker ID" if self.transcriber.can_diarize and self.config.prefer_diarization else ""
                 rumps.notification(
                     title="Auto-Transcribing...",
-                    subtitle="",
+                    subtitle=method_hint,
                     message=f"Processing: {audio_path.name}"
                 )
 
-                text = self.transcriber.transcribe(audio_path)
+                text, method = self.transcriber.transcribe(audio_path)
                 transcript_path = audio_path.with_suffix(".txt")
 
+                method_msg = "with speakers" if method == "diarization" else ""
                 rumps.notification(
                     title="Transcription Complete",
-                    subtitle="Click to open",
+                    subtitle=f"Click to open {method_msg}",
                     message=f"Saved: {transcript_path.name}",
                     action_button="Open",
                     data={"action": "open", "path": str(transcript_path)}
@@ -398,18 +441,20 @@ class MeetingRecorderApp(rumps.App):
 
         def transcribe():
             try:
+                method_hint = "with speaker ID" if self.transcriber.can_diarize and self.config.prefer_diarization else ""
                 rumps.notification(
                     title="Transcribing...",
-                    subtitle="",
+                    subtitle=method_hint,
                     message=f"Processing: {latest.name}"
                 )
 
-                text = self.transcriber.transcribe(latest)
+                text, method = self.transcriber.transcribe(latest)
                 transcript_path = latest.with_suffix(".txt")
 
+                method_msg = "(with speakers)" if method == "diarization" else ""
                 rumps.notification(
                     title="Transcription Complete",
-                    subtitle="Click to open",
+                    subtitle=f"Click to open {method_msg}",
                     message=f"Saved transcript for {latest.name}",
                     action_button="Open",
                     data={"action": "open", "path": str(transcript_path)}

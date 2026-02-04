@@ -14,6 +14,8 @@ class Config:
         "auto_summarize": True,
         "ollama_model": "llama3.1:latest",
         "whisper_model": "distil-medium.en",
+        "diarization_model": "medium.en",
+        "prefer_diarization": True,
         "weekdays_only": True,
     }
 
@@ -83,3 +85,15 @@ class Config:
     @property
     def whisper_model(self) -> str:
         return self._config.get("whisper_model", "distil-medium.en")
+
+    @property
+    def diarization_model(self) -> str:
+        return self._config.get("diarization_model", "medium.en")
+
+    @property
+    def prefer_diarization(self) -> bool:
+        return self._config.get("prefer_diarization", True)
+
+    @prefer_diarization.setter
+    def prefer_diarization(self, value: bool):
+        self.set("prefer_diarization", value)

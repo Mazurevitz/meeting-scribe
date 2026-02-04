@@ -4,3 +4,7 @@ numpy>=1.24.0
 scipy>=1.10.0
 lightning-whisper-mlx>=0.0.5
 requests>=2.31.0
+
+# Optional: Speaker diarization (requires HF_TOKEN)
+# pip install whisperx
+# whisperx
