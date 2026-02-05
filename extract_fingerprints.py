@@ -105,7 +105,13 @@ def main():
 
             speaker_waveform = waveform[:, start_sample:end_sample]
             emb = embedding_model(speaker_waveform.unsqueeze(0))
-            embeddings[speaker] = emb.squeeze().cpu().numpy().tolist()
+            emb = emb.squeeze()
+            # Handle both torch tensor and numpy array returns
+            if hasattr(emb, 'cpu'):
+                emb = emb.cpu().numpy()
+            elif hasattr(emb, 'numpy'):
+                emb = emb.numpy()
+            embeddings[speaker] = emb.tolist() if hasattr(emb, 'tolist') else list(emb)
             print(f"  Extracted embedding for {speaker}", flush=True)
 
         # Cleanup
