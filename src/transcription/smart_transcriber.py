@@ -12,8 +12,9 @@ class SmartTranscriber:
     Transcriber that tries diarization first, falls back to basic transcription.
 
     Priority:
-    1. whisperx with speaker diarization (if available + HF_TOKEN set)
-    2. lightning-whisper-mlx (fast, Apple Silicon optimized)
+    1. Hybrid transcriber (fast MLX + pyannote diarization)
+    2. Full whisperx diarization (slower fallback)
+    3. lightning-whisper-mlx basic (no speaker labels)
     """
 
     def __init__(
@@ -28,6 +29,7 @@ class SmartTranscriber:
         self.whisper_model = whisper_model
         self.diarization_model = diarization_model
 
+        self._hybrid_transcriber = None
         self._diarized_transcriber = None
         self._basic_transcriber = None
 
@@ -36,9 +38,18 @@ class SmartTranscriber:
 
     def _check_diarization(self) -> Tuple[bool, str]:
         """Check if diarization is available."""
+        # First check hybrid (preferred)
+        try:
+            from .hybrid_transcriber import HybridTranscriber
+            available, msg = HybridTranscriber.is_available()
+            if available:
+                return True, "Hybrid diarization available (fast)"
+        except Exception:
+            pass
+
+        # Fall back to full whisperx
         try:
             from .diarized_transcriber import DiarizedTranscriber
-
             available, msg = DiarizedTranscriber.is_available()
             if not available:
                 return False, msg
@@ -46,12 +57,22 @@ class SmartTranscriber:
             if not self.hf_token:
                 return False, "HF_TOKEN not set (required for speaker diarization)"
 
-            return True, "Diarization available"
+            return True, "Diarization available (whisperx)"
         except Exception as e:
             return False, f"Diarization check failed: {e}"
 
+    def _get_hybrid_transcriber(self):
+        """Get or create hybrid transcriber."""
+        if self._hybrid_transcriber is None:
+            from .hybrid_transcriber import HybridTranscriber
+            self._hybrid_transcriber = HybridTranscriber(
+                whisper_model=self.whisper_model,
+                hf_token=self.hf_token,
+            )
+        return self._hybrid_transcriber
+
     def _get_diarized_transcriber(self):
-        """Get or create diarized transcriber."""
+        """Get or create diarized transcriber (whisperx fallback)."""
         if self._diarized_transcriber is None:
             from .diarized_transcriber import DiarizedTranscriber
             self._diarized_transcriber = DiarizedTranscriber(
@@ -103,6 +124,24 @@ class SmartTranscriber:
         ) or force_diarization
 
         if use_diarization:
+            # Try hybrid first (much faster)
+            try:
+                from .hybrid_transcriber import HybridTranscriber
+                available, _ = HybridTranscriber.is_available()
+                if available:
+                    transcriber = self._get_hybrid_transcriber()
+                    text = transcriber.transcribe(
+                        audio_path,
+                        output_path=output_path,
+                        num_speakers=num_speakers,
+                        min_speakers=min_speakers,
+                        max_speakers=max_speakers,
+                    )
+                    return text, "hybrid"
+            except Exception as e:
+                print(f"Hybrid transcription failed ({e}), trying whisperx...")
+
+            # Fall back to full whisperx
             try:
                 transcriber = self._get_diarized_transcriber()
                 text = transcriber.transcribe(
@@ -116,7 +155,6 @@ class SmartTranscriber:
             except Exception as e:
                 if force_diarization:
                     raise
-                # Fall back to basic
                 print(f"Diarization failed ({e}), falling back to basic transcription")
 
         # Basic transcription
