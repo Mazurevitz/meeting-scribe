@@ -14,35 +14,40 @@ class OllamaClient:
     DEFAULT_MODEL = "llama3.1:latest"
     DEFAULT_URL = "http://localhost:11434"
 
-    MEETING_SUMMARY_PROMPT = """You are a helpful assistant that summarizes meeting transcripts.
+    MEETING_SUMMARY_PROMPT = """Summarize this meeting transcript. Be direct and specific.
 
-Given the following meeting transcript, please provide:
+**Rules:**
+- Extract NAMES of people mentioned and what they're responsible for
+- Focus on work topics; skip small talk unless it contains useful context
+- Be specific: use actual project names, version numbers, deadlines mentioned
+- If something is unclear or garbled in the transcript, skip it
 
-1. **Meeting Summary** (2-3 paragraphs)
-   - Key topics discussed
-   - Important decisions made
-   - Overall context and purpose
+**Output format:**
 
-2. **Key Points** (bullet points)
-   - Main discussion points
-   - Important information shared
+## Summary
+2-3 sentences: What was this meeting about? What's the current situation?
 
-3. **Action Items** (if any)
-   - Tasks assigned with responsible person (if mentioned)
-   - Deadlines (if mentioned)
-   - Follow-up items
+## Action Items
+- [ ] **[Person]**: Task description (deadline if mentioned)
+- [ ] **[Person]**: Task description
+(If no clear action items, write "None explicitly assigned")
 
-4. **Decisions Made** (if any)
-   - List any decisions that were agreed upon
+## Key Decisions
+- Decision 1
+- Decision 2
+(If no decisions, write "None - discussion only")
 
-Please be concise but comprehensive. Focus on actionable information.
+## Topics Discussed
+- Topic 1: Brief detail
+- Topic 2: Brief detail
+
+## People Mentioned
+- **Name**: Role or context (e.g., "working on notifications")
 
 ---
 TRANSCRIPT:
 {transcript}
----
-
-Please provide the summary:"""
+---"""
 
     def __init__(self, model: Optional[str] = None, base_url: Optional[str] = None):
         self.model = model or self.DEFAULT_MODEL

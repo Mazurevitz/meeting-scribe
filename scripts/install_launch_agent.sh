@@ -15,6 +15,12 @@ mkdir -p "$LAUNCH_AGENTS_DIR"
 PYTHON_PATH=$(which python3)
 
 # Create the plist file
+# Load HF token from .env if exists
+HF_TOKEN=""
+if [ -f "$PROJECT_DIR/.env" ]; then
+    HF_TOKEN=$(grep "^HF_TOKEN=" "$PROJECT_DIR/.env" | cut -d'=' -f2)
+fi
+
 cat > "$LAUNCH_AGENTS_DIR/$PLIST_NAME" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -29,6 +35,11 @@ cat > "$LAUNCH_AGENTS_DIR/$PLIST_NAME" << EOF
     </array>
     <key>WorkingDirectory</key>
     <string>$PROJECT_DIR</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HF_TOKEN</key>
+        <string>$HF_TOKEN</string>
+    </dict>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>

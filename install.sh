@@ -91,6 +91,18 @@ if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
     ./scripts/install_launch_agent.sh
 fi
 
+# Copy app bundle to Applications
+echo ""
+if [ -d "MeetingRecorder.app" ]; then
+    read -p "Install Meeting Recorder app to Applications folder? [Y/n] " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+        cp -r "MeetingRecorder.app" "/Applications/"
+        echo -e "${GREEN}✓ Installed to /Applications/MeetingRecorder.app${NC}"
+        echo "  You can drag it to your Dock for easy access."
+    fi
+fi
+
 echo ""
 echo "=================================="
 echo -e "${GREEN}  Installation Complete!${NC}"
@@ -109,7 +121,8 @@ if [[ -n "$NEEDS_REBOOT" ]]; then
     echo ""
 fi
 
-echo "To start Meeting Scribe now:"
-echo "  python3 run.py"
+echo "To start Meeting Recorder:"
+echo "  • Double-click MeetingRecorder.app in Applications"
+echo "  • Or run: python3 run.py"
 echo ""
 echo "The app will appear as 🎙 in your menu bar."
