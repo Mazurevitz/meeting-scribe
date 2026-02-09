@@ -86,6 +86,19 @@ class WhisperTranscriber:
         """Check if the model is currently loaded."""
         return self._whisper is not None
 
+    def unload_model(self):
+        """Unload the model to free memory."""
+        if self._whisper is not None:
+            del self._whisper
+            self._whisper = None
+            # Clear MPS cache if available
+            try:
+                import torch
+                if hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
+                    torch.mps.empty_cache()
+            except ImportError:
+                pass
+
     @staticmethod
     def available_models() -> List[str]:
         """Return list of recommended models."""

@@ -180,3 +180,18 @@ class SmartTranscriber:
     def can_diarize(self) -> bool:
         """Check if diarization is currently possible."""
         return self._diarization_available
+
+    def cleanup(self):
+        """Release all loaded models to free memory."""
+        if self._basic_transcriber is not None:
+            self._basic_transcriber.unload_model()
+            self._basic_transcriber = None
+        self._hybrid_transcriber = None
+        self._diarized_transcriber = None
+        # Clear MPS cache
+        try:
+            import torch
+            if hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
+                torch.mps.empty_cache()
+        except ImportError:
+            pass

@@ -592,6 +592,9 @@ class MeetingRecorderApp(rumps.App):
         self.call_monitor.stop_monitoring()
         if self.recorder.is_recording:
             self.recorder.stop_recording()
+        # Clean up transcriber models to free memory
+        if hasattr(self, 'transcriber') and self.transcriber:
+            self.transcriber.cleanup()
         rumps.quit_application()
 
 

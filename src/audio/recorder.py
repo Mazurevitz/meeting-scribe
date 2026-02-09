@@ -167,6 +167,10 @@ class AudioRecorder:
 
         combined = self._mix_audio()
 
+        # Clear audio data to free memory
+        self._mic_data = []
+        self._system_data = []
+
         audio_int16 = (combined * 32767).astype(np.int16)
         wavfile.write(self._current_filepath, self.SAMPLE_RATE, audio_int16)
 

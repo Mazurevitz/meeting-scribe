@@ -192,6 +192,12 @@ def main():
                 if best_match:
                     print(f"  {speaker} best match {best_match} (score: {best_score:.2f}) below threshold", flush=True)
 
+        # Free embedding model and audio data
+        del embedding_model, audio_loader, waveform
+        del diarization_pipeline
+        if hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
+            torch.mps.empty_cache()
+
         # Step 5: Merge results with identified names
         print("Merging transcription with speakers...", flush=True)
         merged = []
@@ -441,6 +447,12 @@ class HybridTranscriber:
                 )
 
         finally:
+            # Clean up subprocess streams
+            try:
+                if process.stdout:
+                    process.stdout.close()
+            except Exception:
+                pass
             # Clean up worker script
             try:
                 os.unlink(worker_script)

@@ -109,6 +109,11 @@ def main():
         print("Assigning speakers...", flush=True)
         result = whisperx.assign_word_speakers(diarize_segments, result)
 
+        # Free diarization model and audio
+        del diarize_model, audio
+        if hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
+            torch.mps.empty_cache()
+
         # Format output
         lines = []
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -287,6 +292,12 @@ class DiarizedTranscriber:
                 )
 
         finally:
+            # Clean up subprocess streams
+            try:
+                if process.stdout:
+                    process.stdout.close()
+            except Exception:
+                pass
             try:
                 os.unlink(worker_script)
             except OSError:
