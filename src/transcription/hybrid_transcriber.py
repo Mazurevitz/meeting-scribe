@@ -13,9 +13,20 @@ import subprocess
 import tempfile
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Union, Callable
 
 from .speaker_db import SpeakerDatabase
+
+# Progress stages with percentage ranges
+PROGRESS_STAGES = {
+    "Downsampling audio": 5,
+    "Loading Whisper model": 10,
+    "Running fast transcription": 30,
+    "Loading diarization model": 40,
+    "Running speaker diarization": 80,
+    "Extracting speaker embeddings": 90,
+    "Merging transcription": 95,
+}
 
 
 # Worker script template - executed in separate process
@@ -324,6 +335,7 @@ class HybridTranscriber:
         num_speakers: Optional[int] = None,
         min_speakers: Optional[int] = None,
         max_speakers: Optional[int] = None,
+        progress_callback: Optional[Callable[[int, str], None]] = None,
     ) -> str:
         """
         Transcribe audio with speaker diarization using hybrid approach.
@@ -380,21 +392,43 @@ class HybridTranscriber:
                 text=True,
             )
 
-            # Send config and get output
-            stdout, _ = process.communicate(input=json.dumps(config))
+            # Send config
+            process.stdin.write(json.dumps(config))
+            process.stdin.close()
 
-            # Print progress output (everything before result)
-            if "__RESULT_START__" in stdout:
-                progress, rest = stdout.split("__RESULT_START__", 1)
-                print(progress, end='', flush=True)
+            # Read output in real-time for progress updates
+            stdout_lines = []
+            result_started = False
+            result_lines = []
 
-                # Extract result JSON
-                if "__RESULT_END__" in rest:
-                    result_json = rest.split("__RESULT_END__")[0].strip()
-                    result = json.loads(result_json)
+            for line in process.stdout:
+                stdout_lines.append(line)
+
+                if "__RESULT_START__" in line:
+                    result_started = True
+                    continue
+
+                if result_started:
+                    if "__RESULT_END__" in line:
+                        break
+                    result_lines.append(line)
                 else:
-                    raise RuntimeError(f"Malformed worker output: {stdout}")
+                    # Parse progress and call callback
+                    print(line, end='', flush=True)
+                    if progress_callback:
+                        for stage, pct in PROGRESS_STAGES.items():
+                            if stage in line:
+                                progress_callback(pct, stage)
+                                break
+
+            process.wait()
+
+            # Parse result
+            if result_lines:
+                result_json = "".join(result_lines).strip()
+                result = json.loads(result_json)
             else:
+                stdout = "".join(stdout_lines)
                 raise RuntimeError(f"Worker failed: {stdout}")
 
             if result["success"]:

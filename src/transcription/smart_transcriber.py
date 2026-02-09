@@ -1,7 +1,7 @@
 """Smart transcriber with automatic fallback between diarization and basic transcription."""
 
 from pathlib import Path
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Union, Callable
 import os
 
 from .whisper_transcriber import WhisperTranscriber
@@ -98,6 +98,7 @@ class SmartTranscriber:
         num_speakers: Optional[int] = None,
         min_speakers: Optional[int] = None,
         max_speakers: Optional[int] = None,
+        progress_callback: Optional[Callable[[int, str], None]] = None,
     ) -> Tuple[str, str]:
         """
         Transcribe audio with smart fallback.
@@ -136,6 +137,7 @@ class SmartTranscriber:
                         num_speakers=num_speakers,
                         min_speakers=min_speakers,
                         max_speakers=max_speakers,
+                        progress_callback=progress_callback,
                     )
                     return text, "hybrid"
             except Exception as e:
@@ -150,6 +152,7 @@ class SmartTranscriber:
                     num_speakers=num_speakers,
                     min_speakers=min_speakers,
                     max_speakers=max_speakers,
+                    progress_callback=progress_callback,
                 )
                 return text, "diarization"
             except Exception as e:

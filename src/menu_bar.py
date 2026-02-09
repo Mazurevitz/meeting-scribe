@@ -343,13 +343,17 @@ class MeetingRecorderApp(rumps.App):
                 message=str(e)
             )
 
+    def _update_progress(self, percent: int, stage: str):
+        """Update menu bar with progress percentage."""
+        self.title = f"⏳ {percent}%"
+
     def _auto_process_recording(self, audio_path: Path):
         """Auto-transcribe and optionally summarize a recording."""
         if self._processing:
             return
 
         self._processing = True
-        self.title = "⏳"
+        self.title = "⏳ 0%"
 
         def process():
             try:
@@ -361,7 +365,10 @@ class MeetingRecorderApp(rumps.App):
                     message=f"Processing: {audio_path.name}"
                 )
 
-                text, method = self.transcriber.transcribe(audio_path)
+                text, method = self.transcriber.transcribe(
+                    audio_path,
+                    progress_callback=self._update_progress
+                )
                 transcript_path = audio_path.with_suffix(".txt")
 
                 method_msg = "with speakers" if method == "diarization" else ""
@@ -437,7 +444,7 @@ class MeetingRecorderApp(rumps.App):
             return
 
         self._processing = True
-        self.title = "⏳"
+        self.title = "⏳ 0%"
 
         def transcribe():
             try:
@@ -448,7 +455,10 @@ class MeetingRecorderApp(rumps.App):
                     message=f"Processing: {latest.name}"
                 )
 
-                text, method = self.transcriber.transcribe(latest)
+                text, method = self.transcriber.transcribe(
+                    latest,
+                    progress_callback=self._update_progress
+                )
                 transcript_path = latest.with_suffix(".txt")
 
                 method_msg = "(with speakers)" if method == "diarization" else ""
