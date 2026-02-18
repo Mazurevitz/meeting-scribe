@@ -69,16 +69,21 @@ def main():
         from pyannote.audio import Pipeline, Audio
         from pyannote.audio.pipelines.speaker_verification import PretrainedSpeakerEmbedding
 
+        # Use MPS (Apple Silicon GPU) if available
+        device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+        print(f"  Using device: {device}", flush=True)
+
         pipeline = Pipeline.from_pretrained(
             "pyannote/speaker-diarization-3.1",
             use_auth_token=hf_token
-        )
+        ).to(device)
         diarization = pipeline(str(temp_audio))
 
         # Load embedding model
         print("Extracting embeddings...", flush=True)
         embedding_model = PretrainedSpeakerEmbedding(
             "pyannote/embedding",
+            device=device,
             use_auth_token=hf_token
         )
 

@@ -198,7 +198,14 @@ class DiarizedTranscriber:
     ):
         self.model_name = model_name or self.DEFAULT_MODEL
         self.hf_token = hf_token or os.environ.get("HF_TOKEN")
-        self.device = device or "cpu"
+        if device:
+            self.device = device
+        else:
+            try:
+                import torch
+                self.device = "mps" if torch.backends.mps.is_available() else "cpu"
+            except ImportError:
+                self.device = "cpu"
 
     def transcribe(
         self,

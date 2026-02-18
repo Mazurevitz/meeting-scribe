@@ -123,23 +123,34 @@ def main():
         from pyannote.audio import Pipeline, Audio
         from pyannote.audio.pipelines.speaker_verification import PretrainedSpeakerEmbedding
 
+        # Use MPS (Apple Silicon GPU) if available for much faster diarization
+        device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+        print(f"  Using device: {device}", flush=True)
+
         diarization_pipeline = Pipeline.from_pretrained(
             "pyannote/speaker-diarization-3.1",
             use_auth_token=hf_token
-        )
+        ).to(device)
 
         print("Running speaker diarization...", flush=True)
+
+        def progress_hook(step_name, step, num_steps):
+            pct = int(40 + (step / max(num_steps, 1)) * 45)
+            print(f"__PROGRESS__ {pct} {step_name} ({step}/{num_steps})", flush=True)
+
         diarization = diarization_pipeline(
             str(temp_audio),
             num_speakers=num_speakers,
             min_speakers=min_speakers,
             max_speakers=max_speakers,
+            hook=progress_hook,
         )
 
         # Step 3: Extract speaker embeddings for identification
         print("Extracting speaker embeddings...", flush=True)
         embedding_model = PretrainedSpeakerEmbedding(
             "pyannote/embedding",
+            device=device,
             use_auth_token=hf_token
         )
 
@@ -420,12 +431,22 @@ class HybridTranscriber:
                     result_lines.append(line)
                 else:
                     # Parse progress and call callback
-                    print(line, end='', flush=True)
-                    if progress_callback:
-                        for stage, pct in PROGRESS_STAGES.items():
-                            if stage in line:
-                                progress_callback(pct, stage)
-                                break
+                    if progress_callback and "__PROGRESS__" in line:
+                        # Granular progress: __PROGRESS__ <pct> <stage>
+                        try:
+                            parts = line.strip().split(" ", 2)
+                            pct = int(parts[1])
+                            stage = parts[2] if len(parts) > 2 else "Processing"
+                            progress_callback(pct, stage)
+                        except (ValueError, IndexError):
+                            pass
+                    else:
+                        print(line, end='', flush=True)
+                        if progress_callback:
+                            for stage, pct in PROGRESS_STAGES.items():
+                                if stage in line:
+                                    progress_callback(pct, stage)
+                                    break
 
             process.wait()
 
