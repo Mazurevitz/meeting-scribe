@@ -1,6 +1,6 @@
 # Meeting Recorder
 
-A macOS menu bar app that automatically records Zoom and Teams calls, transcribes them locally using Whisper, and generates AI-powered meeting summaries with Ollama. Everything runs locally on your Mac—no data leaves your machine.
+A macOS menu bar app that automatically records Zoom and Teams calls, transcribes them locally using Whisper, and generates AI-powered meeting summaries with Ollama. Everything runs locally on your Mac — no data leaves your machine.
 
 ![macOS](https://img.shields.io/badge/macOS-000000?style=flat&logo=apple&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.9+-3776AB?style=flat&logo=python&logoColor=white)
@@ -9,21 +9,24 @@ A macOS menu bar app that automatically records Zoom and Teams calls, transcribe
 
 ## Features
 
-- **Auto-Record Calls** — Automatically starts recording when Zoom or Teams calls begin (Mon-Fri)
+- **Auto-Record Calls** — Detects Zoom/Teams calls via audio devices and process monitoring (Mon-Fri)
 - **Dual Audio Capture** — Records both your microphone and system audio (meeting participants)
-- **Speaker Diarization** — Identifies different speakers using pyannote
+- **Speaker Diarization** — Identifies speakers using pyannote community-1
 - **Voice Fingerprinting** — Learns speaker voices and auto-identifies them in future calls
 - **Speaker Naming Tool** — Interactive tool to assign names to speakers after transcription
 - **Local Transcription** — Uses [lightning-whisper-mlx](https://github.com/mustafaaljadery/lightning-whisper-mlx), optimized for Apple Silicon
-- **AI Summaries** — Generates actionable meeting summaries with Ollama
-- **Hands-Free Pipeline** — Record → Transcribe → Summarize runs automatically
-- **Memory Safe** — Subprocess isolation prevents memory leaks during long sessions
+- **AI Summaries** — Generates actionable meeting summaries with Ollama (default: Qwen3 8B)
+- **Crash-Safe Pipeline** — Checkpoint system tracks each stage so work resumes after a crash
+- **Streaming Recorder** — Audio streams to disk in chunks, no OOM on long meetings
+- **Auto-Restart** — Launch agent restarts the app if it crashes
+- **Retry Failed** — One-click retry for failed transcriptions or summaries
+- **Memory Safe** — Subprocess isolation frees all model memory after each stage
 - **Desktop App** — Double-click to launch, auto-starts on login
 - **Privacy First** — 100% local processing, no cloud services, no data collection
 
 ## Requirements
 
-- macOS (Apple Silicon recommended)
+- macOS (Apple Silicon recommended — M1/M2/M3/M4)
 - Python 3.9+
 - [BlackHole](https://existential.audio/blackhole/) (virtual audio driver for system audio capture)
 - [Ollama](https://ollama.ai/) (for meeting summaries)
@@ -67,7 +70,7 @@ After installation, configure Audio MIDI Setup to capture system audio. See [set
 
 ```bash
 brew install ollama
-ollama pull llama3.1:latest
+ollama pull qwen3:8b
 ollama serve  # Keep running in background
 ```
 
@@ -75,7 +78,7 @@ ollama serve  # Keep running in background
 
 ```bash
 # Get a free token from https://huggingface.co/settings/tokens
-# Accept model terms at https://huggingface.co/pyannote/speaker-diarization-3.1
+# Accept model terms at https://huggingface.co/pyannote/speaker-diarization-community-1
 
 # Create .env file
 echo 'HF_TOKEN=hf_your_token_here' > .env
@@ -99,7 +102,7 @@ export HF_TOKEN="hf_your_token_here"
 python run.py
 ```
 
-A microphone icon (🎙) appears in your menu bar.
+A microphone icon appears in your menu bar.
 
 ### Menu Options
 
@@ -112,11 +115,12 @@ A microphone icon (🎙) appears in your menu bar.
 | **Speaker Diarization** | Identify different speakers in transcript |
 | **Transcribe Latest** | Transcribe the most recent recording |
 | **Summarize Latest** | Generate AI summary of the latest transcript |
+| **Retry Failed** | Re-run a failed transcription or summarization |
 | **Copy Summary to Clipboard** | Copy the latest summary for pasting |
 | **Devices** | Select microphone |
 | **Models** | Select Ollama model for summaries |
 | **Open Recordings Folder** | Open saved recordings in Finder |
-| **Status** | Check BlackHole, Ollama, and diarization status |
+| **Status** | Check BlackHole, Ollama, diarization, and pending pipeline status |
 
 ### Naming Speakers
 
@@ -129,12 +133,12 @@ python name_speakers.py
 This shows quotes from each speaker so you can identify them:
 
 ```
-═══ SPEAKER_03 (5 segments) ═══
+--- SPEAKER_03 (5 segments) ---
   [00:00] "Working on notifications for some issues..."
   [00:06] "Is the auto update stuff working properly now?"
 
 Name for SPEAKER_03 (Enter to skip): Andy
-  ✓ Will assign: SPEAKER_03 → Andy
+  -> Will assign: SPEAKER_03 -> Andy
 ```
 
 The tool updates the transcript with real names. Voice fingerprints are saved automatically during the next transcription, so speakers are auto-identified in future calls.
@@ -159,10 +163,12 @@ People and teams are stored in `~/.meeting-recorder/people.json`.
 With default settings, the complete flow is automatic:
 
 1. **Call starts** → Recording begins automatically
-2. **Call ends** → Recording stops
+2. **Call ends** → Recording stops, audio saved to disk
 3. **Auto-transcribe** → Transcript generated with speaker labels
 4. **Auto-summarize** → AI summary with action items created
 5. **Notification** → Click to open the summary
+
+If any step fails, the pipeline checkpoint saves your progress. Use **Retry Failed** from the menu to pick up where it left off — no need to re-record or re-transcribe.
 
 ### Output Files
 
@@ -170,9 +176,10 @@ All files are saved to `~/Documents/MeetingRecordings/`:
 
 ```
 MeetingRecordings/
-├── meeting_20240115_143022.wav        # Audio recording
-├── meeting_20240115_143022.txt        # Transcript (with speaker names)
-└── meeting_20240115_143022.summary.md # AI-generated summary
+├── meeting_20240115_143022.wav            # Audio recording
+├── meeting_20240115_143022.txt            # Transcript (with speaker names)
+├── meeting_20240115_143022.summary.md     # AI-generated summary
+└── meeting_20240115_143022.pipeline.json  # Pipeline checkpoint (auto-cleaned)
 ```
 
 ### Summary Format
@@ -203,34 +210,51 @@ Summaries use an actionable format:
 
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  Menu Bar (rumps)│────▶│  Audio Recorder  │────▶│  Processing     │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
-        │                     │      │                    │
-        │               ┌─────┘      └─────┐              │
-        ▼               ▼                  ▼              ▼
-┌──────────────┐  ┌──────────┐      ┌───────────┐  ┌─────────────┐
-│ Call Monitor │  │ Mic Input│      │ BlackHole │  │ Hybrid      │
-│ (Zoom/Teams) │  └──────────┘      │(sys audio)│  │ Transcriber │
-└──────────────┘                    └───────────┘  └──────┬──────┘
-                                                          │
-                                    ┌─────────────────────┴───────┐
-                                    ▼                             ▼
-                             ┌─────────────┐              ┌─────────────┐
-                             │ MLX Whisper │              │  Pyannote   │
-                             │(transcribe) │              │(diarization)│
-                             └─────────────┘              └─────────────┘
-                                                                 │
-                                                          ┌──────┴──────┐
-                                                          ▼             ▼
-                                                   ┌──────────┐  ┌───────────┐
-                                                   │ Speaker  │  │  Ollama   │
-                                                   │   DB     │  │(summaries)│
-                                                   └──────────┘  └───────────┘
+│  Menu Bar (rumps)│────>│  Audio Recorder  │────>│  Pipeline       │
+└─────────────────┘     │  (streams to     │     │  Checkpoints    │
+        │               │   disk in chunks)│     └─────────────────┘
+        │               └──────────────────┘              │
+        │                     │      │              ┌─────┴─────┐
+        v               ┌────┘      └────┐         v           v
+┌──────────────┐  ┌──────────┐    ┌───────────┐  ┌───────┐ ┌───────────┐
+│ Call Monitor │  │ Mic Input│    │ BlackHole │  │Whisper│ │  Ollama   │
+│ (devices +   │  └──────────┘    │(sys audio)│  │(subprocess)│(summaries)│
+│  processes)  │                  └───────────┘  └───────┘ └───────────┘
+└──────────────┘                                     │
+                                                     v
+                                              ┌─────────────┐
+                                              │  Pyannote   │
+                                              │  community-1│
+                                              │(diarization)│
+                                              └──────┬──────┘
+                                                     v
+                                              ┌──────────────┐
+                                              │  Speaker DB  │
+                                              │(fingerprints)│
+                                              └──────────────┘
 ```
+
+### Crash Safety
+
+- **Audio**: Streams to disk every 5 seconds. Even a crash mid-recording leaves a valid WAV file up to the last flush.
+- **Pipeline**: Each stage writes a checkpoint file. On restart, the app resumes from the last completed stage.
+- **Launch Agent**: macOS auto-restarts the app if it crashes (`KeepAlive` with `SuccessfulExit`).
+- **Call Monitor**: Thread auto-restarts on error, with fallback process detection.
 
 ### Subprocess Isolation
 
-Heavy ML models (Whisper, Pyannote) run in isolated subprocesses. When transcription completes, the subprocess exits and ALL memory is freed by the OS. This prevents the 10-40GB memory leaks common with long-running ML processes.
+Heavy ML models (Whisper, Pyannote) run in isolated subprocesses. When transcription completes, the subprocess exits and ALL memory is freed by the OS. This prevents memory leaks common with long-running ML processes.
+
+### Memory Budget (16GB Mac)
+
+All stages run sequentially — models never compete for memory:
+
+| Stage | RAM Used | Notes |
+|-------|----------|-------|
+| Recording | ~200 MB | Streaming to disk, not accumulating |
+| Transcription | ~6 GB | Whisper subprocess, freed after |
+| Diarization | ~7 GB | Pyannote subprocess, freed after |
+| Summarization | ~9 GB | Ollama (separate process) |
 
 ## Models
 
@@ -238,28 +262,33 @@ Heavy ML models (Whisper, Pyannote) run in isolated subprocesses. When transcrip
 
 | Model | Speed | Accuracy | Use Case |
 |-------|-------|----------|----------|
-| `distil-medium.en` | Fast | Good | Default, recommended |
+| `distil-large-v3` | Fast | Great | **Default, recommended** (~1.5GB) |
+| `distil-medium.en` | Faster | Good | Lighter machines |
 | `tiny.en`, `base.en` | Fastest | Lower | Quick drafts |
-| `medium.en` | Medium | Better | Important meetings |
 | `large-v3` | Slow | Best | Critical meetings |
+
+### Speaker Diarization
+
+Uses [pyannote community-1](https://huggingface.co/pyannote/speaker-diarization-community-1) — better speaker counting and assignment than pyannote 3.1, with MPS (Apple Silicon GPU) acceleration.
 
 ### Summarization (Ollama)
 
-Any Ollama model works. Select from menu under **Models → Ollama Model**.
+Any Ollama model works. Select from menu under **Models > Ollama Model**.
 
-Recommended:
-- `llama3.1:latest` — Default, good balance
+Recommended for 16GB Macs:
+- `qwen3:8b` — **Default**, best quality/speed for 16GB (~5GB, 32K context)
+- `llama3.1:latest` — Solid alternative
 - `mistral:7b` — Fast and capable
-- `llama3.1:70b` — Best quality (requires 48GB+ RAM)
 
 ## Data Storage
 
 | Location | Contents |
 |----------|----------|
-| `~/Documents/MeetingRecordings/` | Audio, transcripts, summaries |
+| `~/Documents/MeetingRecordings/` | Audio, transcripts, summaries, pipeline checkpoints |
 | `~/.meeting-recorder/speakers.json` | Voice fingerprints |
 | `~/.meeting-recorder/people.json` | Known people & teams |
 | `~/.config/meeting-scribe/config.json` | App settings |
+| `~/.config/meeting-scribe/project_dir` | Project path (set by installer) |
 
 ## Troubleshooting
 
@@ -288,7 +317,7 @@ curl http://localhost:11434/api/tags  # Verify it's running
 Check **Status** menu. Common issues:
 
 1. **HF_TOKEN not set**: Create `.env` file with `HF_TOKEN=hf_...`
-2. **Model terms not accepted**: Visit https://huggingface.co/pyannote/speaker-diarization-3.1
+2. **Model terms not accepted**: Visit https://huggingface.co/pyannote/speaker-diarization-community-1
 
 ### App not starting at login
 
@@ -300,6 +329,10 @@ Check **Status** menu. Common issues:
 ### High memory usage
 
 Memory is automatically freed after each transcription due to subprocess isolation. If memory stays high, restart the app.
+
+### Failed transcription or summary
+
+Use **Retry Failed** from the menu bar. The pipeline checkpoint tracks your progress, so it picks up from the last completed stage — no need to re-record or re-transcribe.
 
 ## Contributing
 

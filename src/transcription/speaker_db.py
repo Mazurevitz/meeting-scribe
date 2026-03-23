@@ -1,6 +1,8 @@
 """Speaker database for voice fingerprint storage and matching."""
 
 import json
+import os
+import tempfile
 import numpy as np
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -34,14 +36,25 @@ class SpeakerDatabase:
                 self.speakers = {}
 
     def _save(self):
-        """Save speaker database to disk."""
+        """Save speaker database to disk atomically."""
         data = {
             'version': 1,
             'updated': datetime.now().isoformat(),
             'speakers': self.speakers
         }
-        with open(self.db_path, 'w') as f:
-            json.dump(data, f, indent=2)
+        fd, tmp_path = tempfile.mkstemp(
+            dir=self.db_path.parent, suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, 'w') as f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp_path, self.db_path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     def add_speaker(
         self,

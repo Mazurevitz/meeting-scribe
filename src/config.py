@@ -1,6 +1,8 @@
 """Configuration management for Meeting Scribe."""
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict
 
@@ -12,9 +14,9 @@ class Config:
         "auto_record_enabled": False,
         "auto_transcribe": True,
         "auto_summarize": True,
-        "ollama_model": "llama3.1:latest",
-        "whisper_model": "distil-medium.en",
-        "diarization_model": "medium.en",
+        "ollama_model": "qwen3:8b",
+        "whisper_model": "distil-large-v3",
+        "diarization_model": "distil-large-v3",
         "prefer_diarization": True,
         "weekdays_only": True,
     }
@@ -41,9 +43,20 @@ class Config:
         return self.DEFAULT_CONFIG.copy()
 
     def _save(self):
-        """Save config to file."""
-        with open(self.config_path, "w") as f:
-            json.dump(self._config, f, indent=2)
+        """Save config to file atomically (write to temp, then rename)."""
+        fd, tmp_path = tempfile.mkstemp(
+            dir=self.config_path.parent, suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(self._config, f, indent=2)
+            os.replace(tmp_path, self.config_path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a config value."""

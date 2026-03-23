@@ -12,6 +12,7 @@ from .summarization import OllamaClient
 from .storage import FileManager
 from .auto_record import CallMonitor
 from .config import Config
+from .pipeline import PipelineState, Stage
 
 
 class MeetingRecorderApp(rumps.App):
@@ -20,7 +21,7 @@ class MeetingRecorderApp(rumps.App):
     def __init__(self):
         super().__init__(
             name="Meeting Recorder",
-            title="🎙",
+            title="\U0001f399",
             quit_button=None
         )
 
@@ -51,6 +52,9 @@ class MeetingRecorderApp(rumps.App):
         self.call_monitor.start_monitoring()
 
         self._build_menu()
+
+        # Resume any incomplete pipelines from previous crash
+        self._resume_incomplete()
 
     def _build_menu(self):
         """Build the menu bar menu."""
@@ -88,6 +92,7 @@ class MeetingRecorderApp(rumps.App):
             None,
             rumps.MenuItem("Transcribe Latest", callback=self._transcribe_latest),
             rumps.MenuItem("Summarize Latest", callback=self._summarize_latest),
+            rumps.MenuItem("Retry Failed", callback=self._retry_failed),
             rumps.MenuItem("Copy Summary to Clipboard", callback=self._copy_summary),
             None,
             self._build_devices_menu(),
@@ -136,7 +141,6 @@ class MeetingRecorderApp(rumps.App):
         """Build the model selection submenu."""
         models_menu = rumps.MenuItem("Models")
 
-        # Ollama models submenu
         ollama_menu = rumps.MenuItem("Ollama Model")
         available_models = self.ollama.list_models() if self.ollama.is_available() else []
         current_model = self.config.ollama_model
@@ -162,21 +166,25 @@ class MeetingRecorderApp(rumps.App):
         status_menu = rumps.MenuItem("Status")
 
         blackhole = self.device_manager.get_blackhole_device()
-        bh_status = "✓ Installed" if blackhole else "✗ Not Found"
+        bh_status = "\u2713 Installed" if blackhole else "\u2717 Not Found"
         status_menu.add(rumps.MenuItem(f"BlackHole: {bh_status}"))
 
-        ollama_status = "✓ Running" if self.ollama.is_available() else "✗ Not Running"
+        ollama_status = "\u2713 Running" if self.ollama.is_available() else "\u2717 Not Running"
         status_menu.add(rumps.MenuItem(f"Ollama: {ollama_status}"))
 
         status_menu.add(rumps.MenuItem(f"LLM: {self.config.ollama_model}"))
 
-        # Diarization status
         diar_status = self.transcriber.get_status()
         if diar_status["diarization_available"]:
-            status_menu.add(rumps.MenuItem("Diarization: ✓ Available"))
+            status_menu.add(rumps.MenuItem("Diarization: \u2713 Available"))
         else:
             reason = diar_status["diarization_status"]
-            status_menu.add(rumps.MenuItem(f"Diarization: ✗ {reason}"))
+            status_menu.add(rumps.MenuItem(f"Diarization: \u2717 {reason}"))
+
+        # Show incomplete pipelines
+        incomplete = PipelineState.find_incomplete(self.file_manager.base_dir)
+        if incomplete:
+            status_menu.add(rumps.MenuItem(f"Pending: {len(incomplete)} meeting(s)"))
 
         return status_menu
 
@@ -291,7 +299,7 @@ class MeetingRecorderApp(rumps.App):
             filepath = self.recorder.start_recording()
             self._current_recording_path = filepath
             sender.title = "Stop Recording"
-            self.title = "🔴 00:00"
+            self.title = "\U0001f534 00:00"
 
             self._recording_timer = rumps.Timer(self._update_duration, 1)
             self._recording_timer.start()
@@ -321,7 +329,10 @@ class MeetingRecorderApp(rumps.App):
             filepath = self.recorder.stop_recording()
             self._current_recording_path = filepath
             sender.title = "Start Recording"
-            self.title = "🎙"
+            self.title = "\U0001f399"
+
+            # Create pipeline checkpoint
+            ps = PipelineState(filepath)
 
             rumps.notification(
                 title="Recording Saved",
@@ -333,10 +344,10 @@ class MeetingRecorderApp(rumps.App):
 
             # Auto-process pipeline
             if self.config.auto_transcribe:
-                self._auto_process_recording(filepath)
+                self._run_pipeline(filepath)
 
         except Exception as e:
-            self.title = "🎙"
+            self.title = "\U0001f399"
             rumps.notification(
                 title="Recording Error",
                 subtitle="",
@@ -345,84 +356,170 @@ class MeetingRecorderApp(rumps.App):
 
     def _update_progress(self, percent: int, stage: str):
         """Update menu bar with progress percentage."""
-        self.title = f"⏳ {percent}%"
+        self.title = f"\u23f3 {percent}%"
 
-    def _auto_process_recording(self, audio_path: Path):
-        """Auto-transcribe and optionally summarize a recording."""
+    def _run_pipeline(self, audio_path: Path):
+        """Run transcribe+summarize pipeline with checkpoint tracking."""
         if self._processing:
             return
 
         self._processing = True
-        self.title = "⏳ 0%"
+        self.title = "\u23f3 0%"
 
         def process():
+            ps = PipelineState(audio_path)
             try:
-                # Transcribe
-                method_hint = "with speaker ID" if self.transcriber.can_diarize and self.config.prefer_diarization else ""
-                rumps.notification(
-                    title="Auto-Transcribing...",
-                    subtitle=method_hint,
-                    message=f"Processing: {audio_path.name}"
-                )
+                # --- Transcription ---
+                if ps.stage in (Stage.RECORDED, Stage.FAILED):
+                    ps.mark_transcribing()
 
-                text, method = self.transcriber.transcribe(
-                    audio_path,
-                    progress_callback=self._update_progress
-                )
-                transcript_path = audio_path.with_suffix(".txt")
-
-                method_msg = "with speakers" if method == "diarization" else ""
-                rumps.notification(
-                    title="Transcription Complete",
-                    subtitle=f"Click to open {method_msg}",
-                    message=f"Saved: {transcript_path.name}",
-                    action_button="Open",
-                    data={"action": "open", "path": str(transcript_path)}
-                )
-
-                # Summarize if enabled
-                if self.config.auto_summarize and self.ollama.is_available():
+                    method_hint = "with speaker ID" if self.transcriber.can_diarize and self.config.prefer_diarization else ""
                     rumps.notification(
-                        title="Auto-Summarizing...",
-                        subtitle="",
-                        message=f"Processing: {transcript_path.name}"
+                        title="Transcribing...",
+                        subtitle=method_hint,
+                        message=f"Processing: {audio_path.name}"
                     )
 
-                    self.ollama.summarize_transcript_file(transcript_path)
-                    summary_path = transcript_path.with_suffix(".summary.md")
-                    self._last_summary_path = summary_path
+                    text, method = self.transcriber.transcribe(
+                        audio_path,
+                        progress_callback=self._update_progress
+                    )
+                    ps.mark_transcribed()
 
+                    transcript_path = audio_path.with_suffix(".txt")
+                    method_msg = "with speakers" if method in ("diarization", "hybrid") else ""
                     rumps.notification(
-                        title="Summary Complete",
-                        subtitle="Click to open",
-                        message=f"Meeting processed: {audio_path.stem}",
+                        title="Transcription Complete",
+                        subtitle=f"Click to open {method_msg}",
+                        message=f"Saved: {transcript_path.name}",
                         action_button="Open",
-                        data={"action": "open", "path": str(summary_path)}
+                        data={"action": "open", "path": str(transcript_path)}
                     )
-                elif self.config.auto_summarize and not self.ollama.is_available():
-                    rumps.notification(
-                        title="Summarization Skipped",
-                        subtitle="",
-                        message="Ollama not running"
-                    )
+
+                # --- Summarization ---
+                if ps.stage == Stage.TRANSCRIBED and self.config.auto_summarize:
+                    transcript_path = audio_path.with_suffix(".txt")
+
+                    if self.ollama.is_available():
+                        ps.mark_summarizing()
+
+                        rumps.notification(
+                            title="Summarizing...",
+                            subtitle="",
+                            message=f"Processing: {transcript_path.name}"
+                        )
+
+                        self.ollama.summarize_transcript_file(transcript_path)
+                        summary_path = transcript_path.with_suffix(".summary.md")
+                        self._last_summary_path = summary_path
+
+                        ps.mark_done()
+
+                        rumps.notification(
+                            title="Summary Complete",
+                            subtitle="Click to open",
+                            message=f"Meeting processed: {audio_path.stem}",
+                            action_button="Open",
+                            data={"action": "open", "path": str(summary_path)}
+                        )
+                    else:
+                        rumps.notification(
+                            title="Summarization Skipped",
+                            subtitle="",
+                            message="Ollama not running — retry later via menu"
+                        )
+                elif ps.stage == Stage.TRANSCRIBED and not self.config.auto_summarize:
+                    ps.mark_done()
 
             except Exception as e:
+                failed_stage = "transcribe" if ps.stage == Stage.TRANSCRIBING else "summarize"
+                ps.mark_failed(str(e), failed_stage=failed_stage)
                 rumps.notification(
                     title="Processing Error",
-                    subtitle="",
-                    message=str(e)
+                    subtitle=f"Failed at: {failed_stage}",
+                    message=f"{e}\nUse 'Retry Failed' to try again."
                 )
             finally:
                 self._processing = False
-                self.title = "🎙"
+                self.title = "\U0001f399"
 
         thread = threading.Thread(target=process, daemon=True)
         thread.start()
 
+    def _resume_incomplete(self):
+        """On startup, check for meetings that crashed mid-pipeline."""
+        incomplete = PipelineState.find_incomplete(self.file_manager.base_dir)
+        if not incomplete:
+            return
+
+        # Pick the most recent incomplete meeting
+        latest = incomplete[-1]
+        audio_path = latest.audio_path
+
+        if not audio_path.exists():
+            latest.cleanup()
+            return
+
+        rumps.notification(
+            title="Resuming Pipeline",
+            subtitle="",
+            message=f"Picking up: {audio_path.name} (was: {latest.stage.value})"
+        )
+
+        # Reset from stuck states back to a resumable state
+        if latest.stage in (Stage.TRANSCRIBING,):
+            latest.set_stage(Stage.RECORDED)
+        elif latest.stage in (Stage.SUMMARIZING,):
+            latest.set_stage(Stage.TRANSCRIBED)
+
+        self._run_pipeline(audio_path)
+
+    def _retry_failed(self, sender):
+        """Retry the most recent failed pipeline."""
+        if self._processing:
+            rumps.notification(
+                title="Busy",
+                subtitle="",
+                message="Already processing. Please wait."
+            )
+            return
+
+        incomplete = PipelineState.find_incomplete(self.file_manager.base_dir)
+        if not incomplete:
+            rumps.notification(
+                title="Nothing to Retry",
+                subtitle="",
+                message="No failed or incomplete meetings found."
+            )
+            return
+
+        latest = incomplete[-1]
+        audio_path = latest.audio_path
+
+        if not audio_path.exists():
+            latest.cleanup()
+            rumps.notification(
+                title="Audio Missing",
+                subtitle="",
+                message=f"Audio file deleted: {audio_path.name}"
+            )
+            return
+
+        # Reset from failed/stuck states
+        if latest.stage in (Stage.FAILED, Stage.TRANSCRIBING):
+            if latest._state.get("error_stage") == "summarize":
+                latest.set_stage(Stage.TRANSCRIBED)
+            else:
+                latest.set_stage(Stage.RECORDED)
+        elif latest.stage == Stage.SUMMARIZING:
+            latest.set_stage(Stage.TRANSCRIBED)
+
+        self._run_pipeline(audio_path)
+
     def _update_duration(self, timer):
         """Update the menu bar with recording duration."""
         if self.recorder.is_recording:
-            self.title = f"🔴 {self.recorder.duration_formatted}"
+            self.title = f"\U0001f534 {self.recorder.duration_formatted}"
 
     def _transcribe_latest(self, sender):
         """Transcribe the latest recording."""
@@ -443,44 +540,7 @@ class MeetingRecorderApp(rumps.App):
             )
             return
 
-        self._processing = True
-        self.title = "⏳ 0%"
-
-        def transcribe():
-            try:
-                method_hint = "with speaker ID" if self.transcriber.can_diarize and self.config.prefer_diarization else ""
-                rumps.notification(
-                    title="Transcribing...",
-                    subtitle=method_hint,
-                    message=f"Processing: {latest.name}"
-                )
-
-                text, method = self.transcriber.transcribe(
-                    latest,
-                    progress_callback=self._update_progress
-                )
-                transcript_path = latest.with_suffix(".txt")
-
-                method_msg = "(with speakers)" if method == "diarization" else ""
-                rumps.notification(
-                    title="Transcription Complete",
-                    subtitle=f"Click to open {method_msg}",
-                    message=f"Saved transcript for {latest.name}",
-                    action_button="Open",
-                    data={"action": "open", "path": str(transcript_path)}
-                )
-            except Exception as e:
-                rumps.notification(
-                    title="Transcription Error",
-                    subtitle="",
-                    message=str(e)
-                )
-            finally:
-                self._processing = False
-                self.title = "🎙"
-
-        thread = threading.Thread(target=transcribe, daemon=True)
-        thread.start()
+        self._run_pipeline(latest)
 
     def _summarize_latest(self, sender):
         """Summarize the latest transcript."""
@@ -509,40 +569,49 @@ class MeetingRecorderApp(rumps.App):
             )
             return
 
-        self._processing = True
-        self.title = "⏳"
+        # Find matching audio file for pipeline state
+        audio_path = latest.with_suffix(".wav")
+        if audio_path.exists():
+            ps = PipelineState(audio_path)
+            if ps.stage != Stage.TRANSCRIBED:
+                ps.set_stage(Stage.TRANSCRIBED)
+            self._run_pipeline(audio_path)
+        else:
+            # No pipeline tracking, just summarize directly
+            self._processing = True
+            self.title = "\u23f3"
 
-        def summarize():
-            try:
-                rumps.notification(
-                    title="Summarizing...",
-                    subtitle="",
-                    message=f"Processing: {latest.name}"
-                )
+            def summarize():
+                try:
+                    rumps.notification(
+                        title="Summarizing...",
+                        subtitle="",
+                        message=f"Processing: {latest.name}"
+                    )
 
-                self.ollama.summarize_transcript_file(latest)
-                summary_path = latest.with_suffix(".summary.md")
-                self._last_summary_path = summary_path
+                    self.ollama.summarize_transcript_file(latest)
+                    summary_path = latest.with_suffix(".summary.md")
+                    self._last_summary_path = summary_path
 
-                rumps.notification(
-                    title="Summary Complete",
-                    subtitle="Click to open",
-                    message=f"Saved summary for {latest.name}",
-                    action_button="Open",
-                    data={"action": "open", "path": str(summary_path)}
-                )
-            except Exception as e:
-                rumps.notification(
-                    title="Summarization Error",
-                    subtitle="",
-                    message=str(e)
-                )
-            finally:
-                self._processing = False
-                self.title = "🎙"
+                    rumps.notification(
+                        title="Summary Complete",
+                        subtitle="Click to open",
+                        message=f"Saved summary for {latest.name}",
+                        action_button="Open",
+                        data={"action": "open", "path": str(summary_path)}
+                    )
+                except Exception as e:
+                    rumps.notification(
+                        title="Summarization Error",
+                        subtitle="",
+                        message=str(e)
+                    )
+                finally:
+                    self._processing = False
+                    self.title = "\U0001f399"
 
-        thread = threading.Thread(target=summarize, daemon=True)
-        thread.start()
+            thread = threading.Thread(target=summarize, daemon=True)
+            thread.start()
 
     def _copy_summary(self, sender):
         """Copy the latest summary to clipboard."""
@@ -553,7 +622,6 @@ class MeetingRecorderApp(rumps.App):
                 with open(summary_path, "r") as f:
                     content = f.read()
 
-                # Use pbcopy to copy to clipboard
                 process = subprocess.Popen(
                     ["pbcopy"],
                     stdin=subprocess.PIPE,
@@ -592,7 +660,6 @@ class MeetingRecorderApp(rumps.App):
         self.call_monitor.stop_monitoring()
         if self.recorder.is_recording:
             self.recorder.stop_recording()
-        # Clean up transcriber models to free memory
         if hasattr(self, 'transcriber') and self.transcriber:
             self.transcriber.cleanup()
         rumps.quit_application()

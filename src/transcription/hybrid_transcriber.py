@@ -92,7 +92,7 @@ def main():
             num_samples = int(len(audio) * target_sample_rate / sample_rate)
             audio_resampled = signal.resample(audio, num_samples)
 
-            temp_audio = Path(tempfile.mktemp(suffix=".wav"))
+            temp_audio = Path(tempfile.NamedTemporaryFile(suffix=".wav", delete=False).name)
             audio_int16 = (audio_resampled * 32767).astype(np.int16)
             wavfile.write(temp_audio, target_sample_rate, audio_int16)
 
@@ -128,7 +128,7 @@ def main():
         print(f"  Using device: {device}", flush=True)
 
         diarization_pipeline = Pipeline.from_pretrained(
-            "pyannote/speaker-diarization-3.1",
+            "pyannote/speaker-diarization-community-1",
             use_auth_token=hf_token
         ).to(device)
 

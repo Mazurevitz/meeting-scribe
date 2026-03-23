@@ -43,7 +43,10 @@ cat > "$LAUNCH_AGENTS_DIR/$PLIST_NAME" << EOF
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
-    <false/>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
     <key>StandardOutPath</key>
     <string>/tmp/meeting-scribe.log</string>
     <key>StandardErrorPath</key>

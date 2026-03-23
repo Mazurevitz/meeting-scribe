@@ -1,22 +1,28 @@
 #!/bin/bash
 
 # Meeting Recorder Launcher
-# This script launches the Meeting Recorder menu bar app
+# Finds the project directory automatically, then runs run.py.
 
 LOG_FILE="/tmp/meeting-recorder-launcher.log"
 exec > "$LOG_FILE" 2>&1
 echo "$(date): Launcher starting..."
 
-# Hardcoded project directory (most reliable)
-PROJECT_DIR="/Volumes/external_storage/Personal/Projects/meetings-ai-notes"
-
-# Fallback: try to find it relative to the app bundle
-if [ ! -f "$PROJECT_DIR/run.py" ]; then
-    APP_DIR="$(dirname "$(dirname "$(dirname "$0")")")"
-    PROJECT_DIR="$(dirname "$APP_DIR")"
+# 1. Config file can store the project path (set by install.sh)
+CONFIG_FILE="$HOME/.config/meeting-scribe/project_dir"
+if [ -f "$CONFIG_FILE" ]; then
+    PROJECT_DIR="$(cat "$CONFIG_FILE")"
 fi
 
-# Final check
+# 2. Fallback: try relative to the .app bundle (works when .app sits in repo)
+if [ -z "$PROJECT_DIR" ] || [ ! -f "$PROJECT_DIR/run.py" ]; then
+    APP_DIR="$(dirname "$(dirname "$(dirname "$0")")")"
+    CANDIDATE="$(dirname "$APP_DIR")"
+    if [ -f "$CANDIDATE/run.py" ]; then
+        PROJECT_DIR="$CANDIDATE"
+    fi
+fi
+
+# 3. Final check
 if [ ! -f "$PROJECT_DIR/run.py" ]; then
     echo "$(date): ERROR - Could not find run.py in $PROJECT_DIR"
     osascript -e 'display notification "Could not find Meeting Recorder project" with title "Error"'
@@ -26,7 +32,7 @@ fi
 echo "$(date): Using PROJECT_DIR=$PROJECT_DIR"
 cd "$PROJECT_DIR"
 
-# Load HF token from .env file if it exists
+# Load .env
 if [ -f ".env" ]; then
     echo "$(date): Loading .env file"
     set -a
@@ -34,10 +40,8 @@ if [ -f ".env" ]; then
     set +a
 fi
 
-# Set HF_TOKEN if not already set (fallback)
-export HF_TOKEN="${HF_TOKEN:-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}"
+export HF_TOKEN="${HF_TOKEN:-}"
 echo "$(date): HF_TOKEN set (${#HF_TOKEN} chars)"
 
-# Run the menu bar app with run.py (simpler, more reliable)
 echo "$(date): Launching python3 run.py"
 exec /usr/bin/python3 run.py

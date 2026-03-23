@@ -1,26 +1,56 @@
-"""Dual-stream audio recorder for mic and system audio."""
+"""Dual-stream audio recorder for mic and system audio.
 
+Streams audio to disk in chunks to avoid OOM on long recordings.
+"""
+
+import struct
 import threading
 import queue
 import time
 from pathlib import Path
 from datetime import datetime
-from typing import List, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import numpy as np
 import sounddevice as sd
-from scipy.io import wavfile
 
 from .devices import AudioDeviceManager, AudioDevice
 
+# WAV header size (44 bytes) — we write a placeholder then patch at end
+_WAV_HEADER_SIZE = 44
+
+
+def _write_wav_header(f, sample_rate: int, channels: int, num_samples: int):
+    """Write a complete WAV header at the current position."""
+    data_size = num_samples * channels * 2  # 16-bit = 2 bytes
+    f.write(b'RIFF')
+    f.write(struct.pack('<I', 36 + data_size))
+    f.write(b'WAVE')
+    f.write(b'fmt ')
+    f.write(struct.pack('<I', 16))              # chunk size
+    f.write(struct.pack('<H', 1))               # PCM
+    f.write(struct.pack('<H', channels))
+    f.write(struct.pack('<I', sample_rate))
+    f.write(struct.pack('<I', sample_rate * channels * 2))  # byte rate
+    f.write(struct.pack('<H', channels * 2))    # block align
+    f.write(struct.pack('<H', 16))              # bits per sample
+    f.write(b'data')
+    f.write(struct.pack('<I', data_size))
+
 
 class AudioRecorder:
-    """Records audio from microphone and/or system audio (via BlackHole)."""
+    """Records audio from microphone and/or system audio (via BlackHole).
+
+    Streams mixed audio to disk every few seconds so memory stays flat
+    regardless of recording length. If the process dies mid-recording,
+    the WAV file is still readable up to the last flushed chunk.
+    """
 
     SAMPLE_RATE = 44100
     CHANNELS = 1
     DTYPE = np.float32
     BLOCK_SIZE = 1024
+    FLUSH_INTERVAL = 5.0  # seconds between disk flushes
 
     def __init__(self, output_dir: Optional[Union[Path, str]] = None):
         self.device_manager = AudioDeviceManager()
@@ -34,14 +64,14 @@ class AudioRecorder:
 
         self._mic_queue: queue.Queue = queue.Queue()
         self._system_queue: queue.Queue = queue.Queue()
-        self._mic_data: List[np.ndarray] = []
-        self._system_data: List[np.ndarray] = []
 
         self._mic_stream: Optional[sd.InputStream] = None
         self._system_stream: Optional[sd.InputStream] = None
         self._writer_thread: Optional[threading.Thread] = None
 
         self._current_filepath: Optional[Path] = None
+        self._wav_file = None
+        self._total_samples_written = 0
 
     def set_microphone(self, device: Optional[AudioDevice]) -> None:
         """Set the microphone device to use."""
@@ -73,24 +103,78 @@ class AudioRecorder:
             self._system_queue.put(indata.copy())
         return callback
 
-    def _writer_loop(self):
-        """Background thread to collect audio data from queues."""
-        while self._recording or not self._mic_queue.empty() or not self._system_queue.empty():
-            try:
-                while True:
-                    data = self._mic_queue.get_nowait()
-                    self._mic_data.append(data)
-            except queue.Empty:
-                pass
+    def _drain_queue(self, q: queue.Queue):
+        """Drain all items from a queue into a list."""
+        chunks = []
+        try:
+            while True:
+                chunks.append(q.get_nowait())
+        except queue.Empty:
+            pass
+        return chunks
 
-            try:
-                while True:
-                    data = self._system_queue.get_nowait()
-                    self._system_data.append(data)
-            except queue.Empty:
-                pass
+    def _mix_and_flush(self, mic_chunks, sys_chunks):
+        """Mix mic + system chunks and write int16 samples to disk."""
+        mic_audio = np.concatenate(mic_chunks) if mic_chunks else np.array([], dtype=self.DTYPE)
+        sys_audio = np.concatenate(sys_chunks) if sys_chunks else np.array([], dtype=self.DTYPE)
+
+        if mic_audio.ndim > 1:
+            mic_audio = mic_audio.mean(axis=1)
+        if sys_audio.ndim > 1:
+            sys_audio = sys_audio.mean(axis=1)
+
+        if len(mic_audio) == 0 and len(sys_audio) == 0:
+            return
+
+        if len(mic_audio) == 0:
+            mixed = sys_audio
+        elif len(sys_audio) == 0:
+            mixed = mic_audio
+        else:
+            max_len = max(len(mic_audio), len(sys_audio))
+            if len(mic_audio) < max_len:
+                mic_audio = np.pad(mic_audio, (0, max_len - len(mic_audio)))
+            if len(sys_audio) < max_len:
+                sys_audio = np.pad(sys_audio, (0, max_len - len(sys_audio)))
+            mixed = mic_audio * 0.5 + sys_audio * 0.5
+
+        max_val = np.max(np.abs(mixed))
+        if max_val > 1.0:
+            mixed = mixed / max_val
+
+        samples_int16 = (mixed * 32767).astype(np.int16)
+        self._wav_file.write(samples_int16.tobytes())
+        self._total_samples_written += len(samples_int16)
+
+    def _writer_loop(self):
+        """Background thread: periodically drain queues and flush to disk."""
+        last_flush = time.time()
+
+        while self._recording or not self._mic_queue.empty() or not self._system_queue.empty():
+            mic_chunks = self._drain_queue(self._mic_queue)
+            sys_chunks = self._drain_queue(self._system_queue)
+
+            if mic_chunks or sys_chunks:
+                try:
+                    self._mix_and_flush(mic_chunks, sys_chunks)
+                except Exception as e:
+                    print(f"Audio flush error: {e}")
+
+            now = time.time()
+            if now - last_flush >= self.FLUSH_INTERVAL:
+                try:
+                    self._wav_file.flush()
+                except Exception:
+                    pass
+                last_flush = now
 
             time.sleep(0.01)
+
+        # Final flush
+        try:
+            self._wav_file.flush()
+        except Exception:
+            pass
 
     def start_recording(self) -> Path:
         """Start recording audio. Returns the output file path."""
@@ -103,9 +187,6 @@ class AudioRecorder:
         if not self._mic_device and not self._system_device:
             raise RuntimeError("No audio devices available")
 
-        self._mic_data = []
-        self._system_data = []
-
         while not self._mic_queue.empty():
             self._mic_queue.get_nowait()
         while not self._system_queue.empty():
@@ -113,6 +194,11 @@ class AudioRecorder:
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self._current_filepath = self.output_dir / f"meeting_{timestamp}.wav"
+
+        # Open WAV file and write placeholder header
+        self._wav_file = open(self._current_filepath, 'wb')
+        self._total_samples_written = 0
+        _write_wav_header(self._wav_file, self.SAMPLE_RATE, self.CHANNELS, 0)
 
         self._recording = True
         self._start_time = time.time()
@@ -145,7 +231,7 @@ class AudioRecorder:
         return self._current_filepath
 
     def stop_recording(self) -> Path:
-        """Stop recording and save the audio file. Returns the file path."""
+        """Stop recording and finalize the WAV file. Returns the file path."""
         if not self._recording:
             raise RuntimeError("Not recording")
 
@@ -162,49 +248,21 @@ class AudioRecorder:
             self._system_stream = None
 
         if self._writer_thread:
-            self._writer_thread.join(timeout=2.0)
+            self._writer_thread.join(timeout=10.0)
             self._writer_thread = None
 
-        combined = self._mix_audio()
-
-        # Clear audio data to free memory
-        self._mic_data = []
-        self._system_data = []
-
-        audio_int16 = (combined * 32767).astype(np.int16)
-        wavfile.write(self._current_filepath, self.SAMPLE_RATE, audio_int16)
+        # Patch WAV header with final sample count
+        if self._wav_file and not self._wav_file.closed:
+            self._wav_file.seek(0)
+            _write_wav_header(
+                self._wav_file, self.SAMPLE_RATE, self.CHANNELS,
+                self._total_samples_written
+            )
+            self._wav_file.close()
+            self._wav_file = None
 
         self._start_time = None
         return self._current_filepath
-
-    def _mix_audio(self) -> np.ndarray:
-        """Mix microphone and system audio together."""
-        mic_audio = np.concatenate(self._mic_data) if self._mic_data else np.array([], dtype=self.DTYPE)
-        system_audio = np.concatenate(self._system_data) if self._system_data else np.array([], dtype=self.DTYPE)
-
-        if mic_audio.ndim > 1:
-            mic_audio = mic_audio.mean(axis=1)
-        if system_audio.ndim > 1:
-            system_audio = system_audio.mean(axis=1)
-
-        if len(mic_audio) == 0:
-            return system_audio
-        if len(system_audio) == 0:
-            return mic_audio
-
-        max_len = max(len(mic_audio), len(system_audio))
-        if len(mic_audio) < max_len:
-            mic_audio = np.pad(mic_audio, (0, max_len - len(mic_audio)))
-        if len(system_audio) < max_len:
-            system_audio = np.pad(system_audio, (0, max_len - len(system_audio)))
-
-        mixed = (mic_audio * 0.5 + system_audio * 0.5)
-
-        max_val = np.max(np.abs(mixed))
-        if max_val > 1.0:
-            mixed = mixed / max_val
-
-        return mixed
 
     @property
     def is_recording(self) -> bool:

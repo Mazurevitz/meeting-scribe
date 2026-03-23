@@ -73,15 +73,21 @@ if pgrep -x "ollama" > /dev/null || curl -s http://localhost:11434/api/tags > /d
     if [[ "$MODELS" -gt 0 ]]; then
         echo -e "${GREEN}✓ Ollama has $MODELS model(s) installed${NC}"
     else
-        echo -e "${YELLOW}No Ollama models found. Installing llama3.1...${NC}"
-        ollama pull llama3.1:latest
+        echo -e "${YELLOW}No Ollama models found. Installing qwen3:8b...${NC}"
+        ollama pull qwen3:8b
     fi
 else
     echo -e "${YELLOW}Ollama not running. Starting and pulling model...${NC}"
     ollama serve &> /dev/null &
     sleep 3
-    ollama pull llama3.1:latest
+    ollama pull qwen3:8b
 fi
+
+# Save project directory so the .app launcher can find it
+PROJ_DIR_CONFIG="$HOME/.config/meeting-scribe"
+mkdir -p "$PROJ_DIR_CONFIG"
+echo "$(pwd)" > "$PROJ_DIR_CONFIG/project_dir"
+echo -e "${GREEN}✓ Project path saved${NC}"
 
 # Setup launch agent
 echo ""
