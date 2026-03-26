@@ -1,9 +1,8 @@
 """Pipeline state management — tracks progress through record/transcribe/summarize stages.
 
-Writes a small JSON checkpoint file alongside each meeting so work can be
-resumed after a crash.  The checkpoint file is named
-``meeting_XXXXXX.pipeline.json`` and lives in the same directory as the
-audio file.
+Each meeting gets a checkpoint file (``meeting_XXXX.pipeline.json``) that
+persists the current stage, any error, and an optional title. This allows
+the app to resume work after a crash and show per-meeting status in the UI.
 """
 
 import json
@@ -13,6 +12,8 @@ from enum import Enum
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
+
+from .config import _atomic_json_write
 
 
 class Stage(str, Enum):
@@ -48,19 +49,9 @@ class PipelineState:
 
     def _save(self):
         self._state["updated"] = datetime.now().isoformat()
-        fd, tmp = tempfile.mkstemp(
-            dir=self.state_path.parent, suffix=".tmp"
-        )
-        try:
-            with os.fdopen(fd, "w") as f:
-                json.dump(self._state, f, indent=2)
-            os.replace(tmp, self.state_path)
-        except Exception:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
+        _atomic_json_write(self.state_path, self._state)
+
+    # ── Stage accessors ──────────────────────────────────────────
 
     @property
     def stage(self) -> Stage:
@@ -70,26 +61,14 @@ class PipelineState:
     def error(self) -> Optional[str]:
         return self._state.get("error")
 
+    @property
+    def failed_stage(self) -> Optional[str]:
+        return self._state.get("error_stage")
+
     def set_stage(self, stage: Stage, error: Optional[str] = None):
         self._state["stage"] = stage.value
         self._state["error"] = error
         self._save()
-
-    @property
-    def needs_transcription(self) -> bool:
-        return self.stage in (Stage.RECORDED, Stage.FAILED) and self._state.get("error_stage") != "transcribe"
-
-    @property
-    def needs_summarization(self) -> bool:
-        return self.stage == Stage.TRANSCRIBED
-
-    @property
-    def can_retry_transcription(self) -> bool:
-        return self.stage == Stage.FAILED
-
-    @property
-    def can_retry_summarization(self) -> bool:
-        return self.stage in (Stage.TRANSCRIBED, Stage.FAILED)
 
     def mark_transcribing(self):
         self.set_stage(Stage.TRANSCRIBING)
@@ -107,6 +86,46 @@ class PipelineState:
         self._state["error_stage"] = failed_stage
         self.set_stage(Stage.FAILED, error=error)
 
+    # ── Metadata (title, tags, people) ──────────────────────────
+
+    @property
+    def title(self) -> Optional[str]:
+        return self._state.get("title")
+
+    @property
+    def tags(self) -> list:
+        return self._state.get("tags", [])
+
+    @property
+    def people(self) -> list:
+        return self._state.get("people", [])
+
+    def set_title(self, title: str):
+        self._state["title"] = title
+        self._save()
+
+    def set_metadata(self, title: Optional[str] = None, tags: list = None, people: list = None):
+        """Set title, tags, and people in one write."""
+        if title is not None:
+            self._state["title"] = title
+        if tags is not None:
+            self._state["tags"] = tags
+        if people is not None:
+            self._state["people"] = people
+        self._save()
+
+    # ── Lifecycle ────────────────────────────────────────────────
+
+    def reset_for_retry(self):
+        """Reset from a failed/stuck state so the pipeline can be retried."""
+        if self.stage in (Stage.FAILED, Stage.TRANSCRIBING):
+            if self.failed_stage == "summarize":
+                self.set_stage(Stage.TRANSCRIBED)
+            else:
+                self.set_stage(Stage.RECORDED)
+        elif self.stage == Stage.SUMMARIZING:
+            self.set_stage(Stage.TRANSCRIBED)
+
     def cleanup(self):
         """Remove the checkpoint file (call when meeting is deleted)."""
         if self.state_path.exists():
@@ -119,7 +138,7 @@ class PipelineState:
         for state_file in sorted(recordings_dir.glob("*.pipeline.json")):
             try:
                 ps = PipelineState(state_file.with_suffix("").with_suffix(".wav"))
-                if ps.stage not in (Stage.DONE,):
+                if ps.stage != Stage.DONE:
                     incomplete.append(ps)
             except Exception:
                 pass

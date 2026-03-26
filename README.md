@@ -7,6 +7,10 @@ A macOS menu bar app that automatically records Zoom and Teams calls, transcribe
 ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-Optimized-000000?style=flat&logo=apple&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
+<p align="center">
+  <img src="assets/app-screenshot.png" alt="Meeting Recorder" width="380">
+</p>
+
 ## Features
 
 - **Auto-Record Calls** — Detects Zoom/Teams calls via audio devices and process monitoring (Mon-Fri)

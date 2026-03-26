@@ -1,36 +1,56 @@
-"""Auto-record monitor for Zoom and Teams calls."""
+"""Auto-record monitor for Zoom and Teams calls.
 
+Detection strategy:
+1. Check if call audio devices exist (Zoom/Teams virtual devices)
+2. Check if call-specific subprocess is running (CptHost, teams2.call)
+3. Require both conditions for 2 consecutive polls before triggering
+
+This avoids false triggers when Teams/Zoom is open but not in a call.
+"""
+
+import logging
 import subprocess
 import threading
-import time
 from datetime import datetime
-from typing import Callable, Optional, Set
+from typing import Callable, Optional
 
 import sounddevice as sd
 
+log = logging.getLogger(__name__)
+
+
+# How many consecutive active polls before triggering a call start
+_CONFIRM_POLLS = 2
+
 
 class CallMonitor:
-    """Monitors for Zoom/Teams calls and triggers recording."""
+    """Monitors for Zoom/Teams calls and triggers recording.
+
+    Uses a two-step detection:
+    1. Check if call audio devices exist (Zoom/Teams virtual devices)
+    2. Check if the call process is actively using audio via macOS APIs
+
+    This avoids false triggers when Teams/Zoom is open but idle.
+    """
 
     CALL_AUDIO_DEVICES = {
         "ZoomAudioDevice",
         "Microsoft Teams Audio",
     }
 
-    # Process names to check as fallback detection
-    CALL_PROCESS_NAMES = {
-        "zoom.us",
-        "Microsoft Teams",
-        "Teams",
-        "CptHost",        # Teams calling process
-    }
+    # Process names that indicate an active call (not just the app running)
+    # These are child processes spawned only during active calls
+    CALL_INDICATOR_PROCESSES = [
+        "CptHost",                  # Teams calling host process
+        "com.microsoft.teams2.call",  # Teams new arch call process
+    ]
 
     def __init__(
         self,
         on_call_start: Optional[Callable[[], None]] = None,
         on_call_end: Optional[Callable[[], None]] = None,
         weekdays_only: bool = True,
-        poll_interval: float = 3.0,
+        poll_interval: float = 5.0,
     ):
         self.on_call_start = on_call_start
         self.on_call_end = on_call_end
@@ -40,57 +60,71 @@ class CallMonitor:
         self._enabled = False
         self._monitoring = False
         self._in_call = False
+        self._active_count = 0
+        self._silent_count = 0
         self._consecutive_errors = 0
         self._monitor_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
 
-    def _get_active_call_devices(self) -> Set[str]:
-        """Get currently active call audio devices."""
-        active = set()
+    def _has_call_audio_device(self) -> bool:
+        """Check if any call audio device is registered."""
         try:
             devices = sd.query_devices()
             for device in devices:
-                name = device["name"]
                 if device["max_input_channels"] > 0:
                     for call_device in self.CALL_AUDIO_DEVICES:
-                        if call_device in name:
-                            active.add(call_device)
+                        if call_device in device["name"]:
+                            return True
             self._consecutive_errors = 0
         except Exception as e:
             self._consecutive_errors += 1
             if self._consecutive_errors <= 3:
-                print(f"Call monitor: device query error ({e}), retrying...")
-        return active
+                log.warning("Device query error: %s", e)
+        return False
 
-    def _check_call_processes(self) -> bool:
-        """Fallback: check if call app processes are running with active audio."""
+    def _has_active_call_process(self) -> bool:
+        """Check if a call-specific subprocess is running.
+
+        Teams and Zoom spawn specific processes only during active calls.
+        This is more reliable than checking the audio device which is
+        always registered when the app is open.
+        """
         try:
+            # Check for Zoom active meeting window
             result = subprocess.run(
-                ["pgrep", "-il", "zoom|teams|CptHost"],
-                capture_output=True, text=True, timeout=2
+                ["pgrep", "-f", "zoom.*meeting|CptHost|teams2.*call"],
+                capture_output=True, text=True, timeout=2,
             )
-            return result.returncode == 0
+            if result.returncode == 0 and result.stdout.strip():
+                return True
         except Exception:
-            return False
+            pass
 
-    def _is_call_active(self) -> bool:
-        """Detect active call using audio devices, with process fallback."""
-        active_devices = self._get_active_call_devices()
-        if active_devices:
-            return True
-
-        # Fallback: if device detection is failing, check processes
-        if self._consecutive_errors > 0:
-            return self._check_call_processes()
+        # Fallback: check macOS audio server for active audio streams
+        try:
+            # lsof checks if Zoom/Teams have open audio file descriptors
+            result = subprocess.run(
+                ["lsof", "-c", "zoom", "-c", "Teams", "-a", "+D", "/dev"],
+                capture_output=True, text=True, timeout=3,
+            )
+            # If there are audio device handles, a call is likely active
+            if "audio" in result.stdout.lower():
+                return True
+        except Exception:
+            pass
 
         return False
 
+    def _is_call_active(self) -> bool:
+        """Detect active call. Requires both device presence AND active process."""
+        if not self._has_call_audio_device():
+            return False
+        return self._has_active_call_process()
+
     def _is_weekday(self) -> bool:
-        """Check if today is a weekday (Monday=0 to Friday=4)."""
         return datetime.now().weekday() < 5
 
     def _should_monitor(self) -> bool:
-        """Check if we should be monitoring for calls."""
         if not self._enabled:
             return False
         if self.weekdays_only and not self._is_weekday():
@@ -104,24 +138,36 @@ class CallMonitor:
                 if self._should_monitor():
                     call_active = self._is_call_active()
 
-                    if call_active and not self._in_call:
+                    if call_active:
+                        self._silent_count = 0
+                        self._active_count += 1
+                    else:
+                        self._active_count = 0
+                        if self._in_call:
+                            self._silent_count += 1
+
+                    # Require consecutive active polls to start
+                    if self._active_count >= _CONFIRM_POLLS and not self._in_call:
                         self._in_call = True
+                        self._silent_count = 0
                         if self.on_call_start:
                             try:
                                 self.on_call_start()
                             except Exception as e:
-                                print(f"Error in on_call_start: {e}")
+                                log.error("Callback error: %s", e)
 
-                    elif not call_active and self._in_call:
+                    # Require consecutive silent polls to end
+                    elif self._silent_count >= _CONFIRM_POLLS and self._in_call:
                         self._in_call = False
+                        self._active_count = 0
                         if self.on_call_end:
                             try:
                                 self.on_call_end()
                             except Exception as e:
-                                print(f"Error in on_call_end: {e}")
+                                log.error("Callback error: %s", e)
 
             except Exception as e:
-                print(f"Call monitor loop error: {e}")
+                log.error("Monitor loop error: %s", e)
 
             self._stop_event.wait(self.poll_interval)
 
@@ -143,7 +189,7 @@ class CallMonitor:
             try:
                 self._monitor_loop()
             except Exception as e:
-                print(f"Call monitor thread crashed ({e}), restarting in 5s...")
+                log.error("Monitor thread crashed, restarting in 5s: %s", e)
                 self._stop_event.wait(5.0)
 
     def stop_monitoring(self):
@@ -159,20 +205,16 @@ class CallMonitor:
 
     @property
     def enabled(self) -> bool:
-        """Check if auto-record is enabled."""
         return self._enabled
 
     @enabled.setter
     def enabled(self, value: bool):
-        """Enable or disable auto-record."""
         self._enabled = value
 
     @property
     def in_call(self) -> bool:
-        """Check if currently in a call."""
         return self._in_call
 
     @property
     def is_monitoring(self) -> bool:
-        """Check if monitoring is active."""
         return self._monitoring

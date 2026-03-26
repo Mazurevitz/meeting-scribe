@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meeting Recorder</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js"></script>
+  <script defer src="alpine.min.js"></script>
+</head>
+<body x-data="app()" x-init="init()">
+
+  <!-- Toast notification -->
+  <div class="toast" x-show="toast" x-transition.opacity x-text="toast"></div>
+
+  <!-- Header: Recording control -->
+  <header class="header">
+    <div class="record-section">
+      <button class="record-btn" :class="{ recording: state.recording }"
+              @click="toggleRecording()" :disabled="state.processing">
+        <span class="record-dot"></span>
+      </button>
+      <div class="record-info">
+        <template x-if="state.recording">
+          <span class="record-label recording-text">Recording <span x-text="state.duration"></span></span>
+        </template>
+        <template x-if="!state.recording && !state.processing">
+          <span class="record-label">Ready</span>
+        </template>
+        <template x-if="state.processing">
+          <span class="record-label processing-text">
+            <span x-text="state.progress_stage || 'Processing'"></span>
+            <span x-show="state.progress != null" x-text="state.progress + '%'"></span>
+          </span>
+        </template>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <button class="cancel-btn" x-show="state.processing" @click="cancelProcessing()" title="Stop processing">Stop</button>
+      <button class="icon-btn" @click="showSettings = !showSettings" title="Settings">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z"/>
+          <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.892 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.892-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 0 0 2.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 0 0 1.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 0 0-1.115 2.693l.16.291c.415.764-.42 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 0 0-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 0 0-2.692-1.115l-.292.16c-.764.415-1.6-.42-1.184-1.185l.159-.291A1.873 1.873 0 0 0 1.945 8.93l-.319-.094c-.835-.246-.835-1.428 0-1.674l.319-.094A1.873 1.873 0 0 0 3.06 4.377l-.16-.292c-.415-.764.42-1.6 1.185-1.184l.292.159a1.873 1.873 0 0 0 2.692-1.115l.094-.319z"/>
+        </svg>
+      </button>
+      <button class="icon-btn" @click="openFolder()" title="Open Folder">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h2.764c.958 0 1.76.56 2.311 1.184C7.985 3.648 8.48 4 9 4h4.5A1.5 1.5 0 0 1 15 5.5v7a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 12.5v-9z"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Settings panel (collapsible) -->
+  <div class="settings-panel" x-show="showSettings" x-transition>
+    <div class="setting-row">
+      <span>Auto-Record Calls</span>
+      <label class="toggle">
+        <input type="checkbox" :checked="state.auto_record"
+               @change="setConfig('auto_record_enabled', $event.target.checked)">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+    <div class="setting-row">
+      <span>Auto-Transcribe</span>
+      <label class="toggle">
+        <input type="checkbox" :checked="state.auto_transcribe"
+               @change="setConfig('auto_transcribe', $event.target.checked)">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+    <div class="setting-row">
+      <span>Auto-Summarize</span>
+      <label class="toggle">
+        <input type="checkbox" :checked="state.auto_summarize"
+               @change="setConfig('auto_summarize', $event.target.checked)">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+    <div class="setting-row">
+      <span>Speaker Diarization</span>
+      <label class="toggle">
+        <input type="checkbox" :checked="state.diarization"
+               @change="setConfig('prefer_diarization', $event.target.checked)"
+               :disabled="!state.diarization_available">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+    <div class="setting-row">
+      <span>LLM Model</span>
+      <select class="select model-select" @change="selectModel($event.target.value)">
+        <template x-for="m in models.models" :key="m.name">
+          <option :value="m.name" x-text="m.name + (m.desc ? ' — ' + m.desc : '')" :selected="m.name === models.current"></option>
+        </template>
+      </select>
+    </div>
+    <div class="setting-row">
+      <span>Microphone</span>
+      <select class="select" @change="selectMic(parseInt($event.target.value))">
+        <template x-for="d in devices.mics" :key="d.index">
+          <option :value="d.index" x-text="d.name" :selected="d.is_selected"></option>
+        </template>
+      </select>
+    </div>
+    <div class="status-row">
+      <span class="status-dot" :class="state.ollama_available ? 'green' : 'red'"></span>
+      <span x-text="state.ollama_available ? 'Ollama running' : 'Ollama offline'"></span>
+      <span class="spacer"></span>
+      <span class="status-dot" :class="state.diarization_available ? 'green' : 'red'"></span>
+      <span x-text="state.diarization_available ? 'Diarization ready' : 'No diarization'"></span>
+    </div>
+  </div>
+
+  <!-- Progress bar -->
+  <div class="progress-bar-container" x-show="state.processing && state.progress != null">
+    <div class="progress-bar" :style="{ width: (state.progress || 0) + '%' }"></div>
+  </div>
+
+  <!-- Search -->
+  <div class="search-bar">
+    <svg class="search-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+      <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/>
+    </svg>
+    <input type="text" x-model="search" placeholder="Search meetings..." class="search-input">
+    <button class="sort-btn" @click="toggleSort()" :title="'Sort by ' + sortBy + ' ' + (sortAsc ? '↑' : '↓')">
+      <span class="sort-label" x-text="sortBy === 'date' ? '📅' : '🔤'"></span>
+      <span class="sort-arrow" x-text="sortAsc ? '↑' : '↓'"></span>
+    </button>
+  </div>
+
+  <!-- Meetings list -->
+  <div class="meetings-list">
+    <template x-if="filteredMeetings().length === 0">
+      <div class="empty-state">
+        <p x-text="search ? 'No matches' : 'No meetings recorded yet'"></p>
+      </div>
+    </template>
+
+    <template x-for="m in filteredMeetings()" :key="m.name">
+      <div class="meeting-row">
+        <div class="meeting-info">
+          <template x-if="renaming !== m.name">
+            <div>
+              <div class="meeting-title-row">
+                <span class="meeting-name" @dblclick="startRename(m)" x-text="m.title || formatName(m.name)"></span>
+                <button class="rename-btn" @click="startRename(m)" title="Rename">&#9998;</button>
+                <button class="rename-btn" @click="aiRename(m)" title="AI Rename"
+                        x-show="m.has_summary && !state.processing">&#10024;</button>
+              </div>
+              <div class="meeting-meta">
+                <span class="meeting-date" x-text="m.created"></span>
+                <template x-if="editingTags !== m.name">
+                  <div class="tags-row">
+                    <template x-for="tag in (m.tags || []).slice(0, 3)" :key="tag">
+                      <span class="tag" x-text="tag" @click="search = tag"></span>
+                    </template>
+                    <span class="tag tag-edit" @click="startEditTags(m)" title="Edit tags">+</span>
+                  </div>
+                </template>
+                <template x-if="editingTags === m.name">
+                  <input class="rename-input tag-input" type="text"
+                         :value="(m.tags || []).join(', ')"
+                         placeholder="tag1, tag2, tag3"
+                         @keydown.enter="finishEditTags(m, $event.target.value)"
+                         @keydown.escape="editingTags = null"
+                         @blur="finishEditTags(m, $event.target.value)"
+                         x-init="$nextTick(() => { $el.focus(); $el.select() })">
+                </template>
+              </div>
+            </div>
+          </template>
+          <template x-if="renaming === m.name">
+            <input class="rename-input" type="text"
+                   :value="m.title || formatName(m.name)"
+                   @keydown.enter="finishRename(m, $event.target.value)"
+                   @keydown.escape="renaming = null"
+                   @blur="finishRename(m, $event.target.value)"
+                   x-init="$nextTick(() => { $el.focus(); $el.select() })">
+          </template>
+        </div>
+
+        <div class="meeting-status">
+          <div class="meeting-badges">
+            <span class="badge badge-audio" :class="m.has_audio ? 'badge-ok' : 'badge-no'"
+                  :title="m.has_audio ? 'Audio recorded' : 'No audio'">A</span>
+            <span class="badge" :class="badgeClass(m, 'transcript')"
+                  :title="m.has_transcript ? 'Transcript ready — click to open' : m.has_audio ? 'Click to transcribe' : 'Record first'"
+                  @click="badgeClick(m, 'transcript')">T</span>
+            <span class="badge" :class="badgeClass(m, 'summary')"
+                  :title="m.has_summary ? 'Summary ready — click to open' : m.has_transcript ? 'Click to summarize' : 'Transcribe first'"
+                  @click="badgeClick(m, 'summary')">S</span>
+          </div>
+          <span class="meeting-error" x-show="m.pipeline_stage === 'failed' && m.pipeline_error"
+                :title="m.pipeline_error" @click="copyError(m.pipeline_error)">
+            <span class="meeting-error-label" x-text="m.pipeline_error"></span>
+          </span>
+        </div>
+
+        <div class="meeting-actions">
+          <template x-if="m.has_audio && !m.has_transcript">
+            <button class="action-btn" @click="doTranscribe(m)" :disabled="state.processing" title="Transcribe">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 0a.5.5 0 0 1 .5.5V1h8V.5a.5.5 0 0 1 1 0V1h1a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h1V.5a.5.5 0 0 1 .5-.5zM1 4v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V4H1z"/></svg>
+            </button>
+          </template>
+          <template x-if="m.has_transcript && !m.has_summary">
+            <button class="action-btn" @click="doSummarize(m)" :disabled="state.processing" title="Summarize">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M14 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h12zM2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2z"/><path d="M3 5.5a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5zM3 8a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9A.5.5 0 0 1 3 8zm0 2.5a.5.5 0 0 1 .5-.5h6a.5.5 0 0 1 0 1h-6a.5.5 0 0 1-.5-.5z"/></svg>
+            </button>
+          </template>
+          <template x-if="m.has_summary">
+            <button class="action-btn" @click="copySummary(m)" title="Copy Summary">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M4 1.5H3a2 2 0 0 0-2 2V14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3.5a2 2 0 0 0-2-2h-1v1h1a1 1 0 0 1 1 1V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1h1v-1z"/><path d="M9.5 1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1-.5-.5v-1a.5.5 0 0 1 .5-.5h3zm-3-1A1.5 1.5 0 0 0 5 1.5v1A1.5 1.5 0 0 0 6.5 4h3A1.5 1.5 0 0 0 11 2.5v-1A1.5 1.5 0 0 0 9.5 0h-3z"/></svg>
+            </button>
+          </template>
+          <button class="action-btn" @click="openMeeting(m)" title="Open Files">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M8.636 3.5a.5.5 0 0 0-.5-.5H1.5A1.5 1.5 0 0 0 0 4.5v10A1.5 1.5 0 0 0 1.5 16h10a1.5 1.5 0 0 0 1.5-1.5V7.864a.5.5 0 0 0-1 0V14.5a.5.5 0 0 1-.5.5h-10a.5.5 0 0 1-.5-.5v-10a.5.5 0 0 1 .5-.5h6.636a.5.5 0 0 0 .5-.5z"/><path fill-rule="evenodd" d="M16 .5a.5.5 0 0 0-.5-.5h-5a.5.5 0 0 0 0 1h3.793L6.146 9.146a.5.5 0 1 0 .708.708L15 1.707V5.5a.5.5 0 0 0 1 0v-5z"/></svg>
+          </button>
+          <button class="action-btn delete-btn" @click="deleteMeeting(m)" title="Delete">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/><path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H5.5l1-1h3l1 1h2.5a1 1 0 0 1 1 1v1zM4.118 4L4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/></svg>
+          </button>
+        </div>
+      </div>
+    </template>
+  </div>
+
+
+</body>
+</html>

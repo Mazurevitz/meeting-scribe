@@ -1,0 +1,601 @@
+/* Meeting Recorder — macOS native look */
+
+:root {
+  --bg: #f6f6f6;
+  --bg-secondary: #ebebeb;
+  --text: #1d1d1f;
+  --text-secondary: #86868b;
+  --border: #d2d2d7;
+  --accent: #007aff;
+  --red: #ff3b30;
+  --green: #34c759;
+  --orange: #ff9500;
+  --badge-ok: #34c759;
+  --badge-no: #d2d2d7;
+  --badge-fail: #ff3b30;
+  --badge-progress: #ff9500;
+  --row-hover: rgba(0,0,0,0.04);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1e1e1e;
+    --bg-secondary: #2c2c2e;
+    --text: #f5f5f7;
+    --text-secondary: #86868b;
+    --border: #3a3a3c;
+    --row-hover: rgba(255,255,255,0.06);
+  }
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* ── Toast ─────────────────────────────────────── */
+
+.toast {
+  position: fixed;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--text);
+  color: var(--bg);
+  font-size: 11px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  z-index: 100;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+
+/* ── Header ────────────────────────────────────── */
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.record-section {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.record-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--bg-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.record-btn:hover {
+  border-color: var(--red);
+}
+
+.record-btn.recording {
+  border-color: var(--red);
+  background: rgba(255, 59, 48, 0.1);
+}
+
+.record-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--red);
+  transition: all 0.2s;
+}
+
+.record-btn:not(.recording) .record-dot {
+  background: var(--text-secondary);
+}
+
+.record-btn.recording .record-dot {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.record-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.recording-text {
+  color: var(--red);
+  font-weight: 500;
+}
+
+.processing-text {
+  color: var(--orange);
+  font-weight: 500;
+}
+
+.header-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.icon-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-btn:hover {
+  background: var(--bg-secondary);
+  color: var(--text);
+}
+
+/* ── Settings ──────────────────────────────────── */
+
+.settings-panel {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 0;
+  font-size: 12px;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 0 2px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.spacer { flex: 1; }
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.status-dot.green { background: var(--green); }
+.status-dot.red { background: var(--red); }
+
+/* Toggle switch */
+.toggle {
+  position: relative;
+  width: 36px;
+  height: 20px;
+}
+
+.toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: 0.2s;
+}
+
+.toggle-slider::before {
+  content: "";
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: white;
+  top: 2px;
+  left: 2px;
+  transition: 0.2s;
+}
+
+.toggle input:checked + .toggle-slider {
+  background: var(--accent);
+}
+
+.toggle input:checked + .toggle-slider::before {
+  transform: translateX(16px);
+}
+
+.toggle input:disabled + .toggle-slider {
+  opacity: 0.4;
+}
+
+/* Select */
+.select {
+  font-size: 11px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text);
+  max-width: 160px;
+}
+
+.cancel-btn {
+  font-size: 11px;
+  padding: 3px 10px;
+  border: 1px solid var(--red);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--red);
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.cancel-btn:hover {
+  background: var(--red);
+  color: white;
+}
+
+/* ── Search ────────────────────────────────────── */
+
+.search-bar {
+  padding: 8px 16px;
+  position: relative;
+}
+
+.search-icon {
+  position: absolute;
+  left: 24px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-secondary);
+}
+
+.sort-btn {
+  position: absolute;
+  right: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  color: var(--text-secondary);
+}
+
+.sort-btn:hover {
+  background: var(--bg-secondary);
+  color: var(--text);
+}
+
+.sort-label { font-size: 12px; }
+.sort-arrow { font-size: 10px; }
+
+.search-input {
+  width: 100%;
+  padding: 6px 36px 6px 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+
+.search-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(0,122,255,0.2);
+}
+
+/* ── Meetings list ─────────────────────────────── */
+
+.meetings-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 8px;
+}
+
+.meeting-row {
+  display: flex;
+  align-items: center;
+  padding: 8px;
+  border-radius: 6px;
+  gap: 8px;
+  transition: background 0.15s;
+}
+
+.meeting-row:hover {
+  background: var(--row-hover);
+}
+
+.meeting-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+}
+
+.meeting-name {
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
+  transition: mask-image 0.2s;
+}
+
+.meeting-row:hover .meeting-name {
+  mask-image: none;
+  -webkit-mask-image: none;
+  overflow: visible;
+}
+
+.meeting-title-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rename-btn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 10px;
+  padding: 0 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  color: var(--text-secondary);
+}
+
+.meeting-row:hover .rename-btn {
+  opacity: 0.6;
+}
+
+.rename-btn:hover {
+  opacity: 1 !important;
+  color: var(--accent);
+}
+
+.meeting-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.meeting-date {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.tag {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tag:hover {
+  background: var(--accent);
+  color: white;
+}
+
+.tags-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tag-edit {
+  opacity: 0;
+  font-weight: 700;
+  font-size: 10px;
+}
+
+.meeting-row:hover .tag-edit {
+  opacity: 0.6;
+}
+
+.tag-edit:hover {
+  opacity: 1 !important;
+}
+
+.tag-input {
+  font-size: 10px;
+  padding: 1px 4px;
+  max-width: 200px;
+}
+
+.rename-input {
+  width: 100%;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 2px 4px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0,122,255,0.2);
+}
+
+/* Status column (badges + error) */
+.meeting-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.meeting-error {
+  font-size: 9px;
+  color: var(--red);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.meeting-error::before {
+  content: "?";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--red);
+  color: white;
+  font-size: 8px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.meeting-error-label {
+  max-width: 80px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Badges */
+.meeting-badges {
+  display: flex;
+  gap: 3px;
+}
+
+.badge {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+}
+
+.badge-ok { background: var(--badge-ok); cursor: pointer; }
+.badge-ok:hover { filter: brightness(0.85); }
+.badge-audio { cursor: default; }
+.badge-audio:hover { filter: none; }
+.badge-no { background: var(--badge-no); color: var(--text-secondary); }
+.badge-no:hover { background: var(--accent); color: white; cursor: pointer; }
+.badge-no.badge-audio:hover { background: var(--badge-no); color: var(--text-secondary); cursor: default; }
+.badge-fail { background: var(--badge-fail); cursor: pointer; }
+.badge-fail:hover { filter: brightness(0.85); }
+.badge-progress { background: var(--badge-progress); }
+
+/* Actions */
+.meeting-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.meeting-row:hover .meeting-actions {
+  opacity: 1;
+}
+
+.action-btn {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.action-btn:hover {
+  background: var(--accent);
+  color: white;
+}
+
+
+.delete-btn:hover {
+  background: var(--red);
+}
+
+.model-select {
+  max-width: 200px;
+}
+
+.action-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* Empty state */
+.empty-state {
+  text-align: center;
+  padding: 40px 16px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+/* ── Progress bar ──────────────────────────────── */
+
+.progress-bar-container {
+  height: 3px;
+  background: var(--bg-secondary);
+}
+
+.progress-bar {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+  border-radius: 0 2px 2px 0;
+}

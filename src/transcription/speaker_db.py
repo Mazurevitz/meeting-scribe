@@ -1,12 +1,16 @@
-"""Speaker database for voice fingerprint storage and matching."""
+"""Speaker database for voice fingerprint storage and matching.
+
+Stores speaker voice embeddings as JSON. Embeddings are averaged
+over multiple samples using a weighted mean to improve accuracy.
+"""
 
 import json
-import os
-import tempfile
 import numpy as np
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
+
+from ..config import _atomic_json_write, SPEAKERS_DIR
 
 
 class SpeakerDatabase:
@@ -16,7 +20,7 @@ class SpeakerDatabase:
     Voice embeddings are averaged over multiple samples to improve matching.
     """
 
-    DEFAULT_DB_PATH = Path.home() / ".meeting-recorder" / "speakers.json"
+    DEFAULT_DB_PATH = SPEAKERS_DIR / "speakers.json"
     SIMILARITY_THRESHOLD = 0.75  # Cosine similarity threshold for matching
 
     def __init__(self, db_path: Optional[Path] = None):
@@ -42,19 +46,7 @@ class SpeakerDatabase:
             'updated': datetime.now().isoformat(),
             'speakers': self.speakers
         }
-        fd, tmp_path = tempfile.mkstemp(
-            dir=self.db_path.parent, suffix=".tmp"
-        )
-        try:
-            with os.fdopen(fd, 'w') as f:
-                json.dump(data, f, indent=2)
-            os.replace(tmp_path, self.db_path)
-        except Exception:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
+        _atomic_json_write(self.db_path, data)
 
     def add_speaker(
         self,
