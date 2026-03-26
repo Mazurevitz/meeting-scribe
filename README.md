@@ -13,20 +13,26 @@ A macOS menu bar app that automatically records Zoom and Teams calls, transcribe
 
 ## Features
 
-- **Auto-Record Calls** — Detects Zoom/Teams calls via audio devices and process monitoring (Mon-Fri)
-- **Dual Audio Capture** — Records both your microphone and system audio (meeting participants)
-- **Speaker Diarization** — Identifies speakers using pyannote community-1
-- **Voice Fingerprinting** — Learns speaker voices and auto-identifies them in future calls
-- **Speaker Naming Tool** — Interactive tool to assign names to speakers after transcription
+### Working
+- **Dual Audio Capture** — Records both your microphone and system audio via BlackHole
 - **Local Transcription** — Uses [lightning-whisper-mlx](https://github.com/mustafaaljadery/lightning-whisper-mlx), optimized for Apple Silicon
+- **Speaker Diarization** — Identifies speakers using pyannote community-1 with MPS GPU acceleration
+- **Voice Fingerprinting** — Learns speaker voices and auto-identifies them in future calls
 - **AI Summaries** — Generates actionable meeting summaries with Ollama (default: Qwen3 8B)
-- **Crash-Safe Pipeline** — Checkpoint system tracks each stage so work resumes after a crash
+- **Window UI** — Full meeting manager with search, tags, sort, and per-meeting pipeline status
+- **Crash-Safe Pipeline** — Checkpoint system tracks each stage; click to retry after a failure
 - **Streaming Recorder** — Audio streams to disk in chunks, no OOM on long meetings
-- **Auto-Restart** — Launch agent restarts the app if it crashes
-- **Retry Failed** — One-click retry for failed transcriptions or summaries
+- **Meeting Tags** — Auto-extracted topics and people from summaries, editable, searchable
+- **AI Rename** — Generate meeting titles from summaries via Ollama, or rename manually
+- **Cancel Processing** — Stop transcription or summarization mid-way and resume later
 - **Memory Safe** — Subprocess isolation frees all model memory after each stage
+- **Auto-Restart** — Launch agent restarts the app if it crashes
 - **Desktop App** — Double-click to launch, auto-starts on login
+- **Speaker Naming Tool** — Interactive CLI to assign names to speakers after transcription
 - **Privacy First** — 100% local processing, no cloud services, no data collection
+
+### Beta
+- **Auto-Record Calls** — Detects Zoom/Teams calls via audio devices and process monitoring (Mon-Fri). May not detect all call types reliably.
 
 ## Requirements
 
